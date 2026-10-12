@@ -45,6 +45,7 @@ Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 
 | # | Item | Status |
 |---|---|---|
+| 3.0 | Medir REQ-04: mapear plugin/automation task/setting de cada harness (DSH: `cordis`, jobs, agenda; Claude Code: mods, hooks, settings) — o que isola por harness e o que cabe numa tela comum | ⏳ |
 | 3.1 | Subagentes e jobs do Claude Code nos painéis da UI | ⏳ |
 | 3.2 | Espelhar a sessão entre `~/.claude/projects` e o log do DSH | ⏳ |
 | 3.3 | Título de sessão, compactação e goal com o motor do Claude Code | ⏳ |

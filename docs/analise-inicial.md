@@ -22,6 +22,12 @@ ao seu processo; a lista de workspaces fica isolada por harness.
 
 - **REQ-03 — Não quebrar o DSH em uso** (dono, 12/10/2026). Teste e execução do harness-deck não
   mexem em `~/.dsh`; tudo o que for do projeto fica em pasta exclusiva `~/.harnessdeck`.
+- **REQ-04 — Plugins, automation tasks e settings isolados por harness** (dono, 12/10/2026). Cada
+  harness tem suas particularidades (ex.: Claude Code tem "mods"; o DSH tem plugins `cordis` e
+  jobs/agenda próprios) — não dá para tratar como um conceito único entre harness. **Não medido
+  ainda:** o que cada harness chama de plugin/task/setting, onde cada um guarda isso (arquivo do
+  projeto? pasta home? servidor remoto?), e o que dá para expor numa tela comum vs. o que precisa
+  de tela própria por harness. Entra como item de medição antes do F3 (ver `plano.md`).
 
 ## 2. O que foi descartado e por quê
 
