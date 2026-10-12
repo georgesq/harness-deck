@@ -142,7 +142,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "watch": "tsc -p tsconfig.json --watch"
+    "watch": "tsc -p tsconfig.json --watch",
+    "test": "node test/smoke.mjs",
+    "package": "node build-package.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

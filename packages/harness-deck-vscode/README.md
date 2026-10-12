@@ -2,6 +2,24 @@
 
 Extensão do VS Code do harness-deck: **um painel por harness, todos na mesma janela**.
 
+## Instalar a partir do código
+
+```bash
+cd packages/harness-deck-vscode
+node build-package.mjs          # compila e gera dist/harness-deck-vscode-<versao>.vsix
+code --install-extension dist/harness-deck-vscode-<versao>.vsix
+```
+
+Depois de instalar, recarregue a janela do VS Code. O ícone **Harness Deck** aparece na barra de
+atividades, com a lista dos harnesses do registro.
+
+Configuração (Settings → Harness Deck): `harnessDeck.home` (raiz de dados, vazio usa
+`$HARNESS_DECK_HOME` ou `~/.harnessdeck`), `harnessDeck.dshCommand` (padrão `dsh`, resolvido no
+PATH), `harnessDeck.autoStart`, `harnessDeck.stopOnExit` e `harnessDeck.openSystemBrowser`.
+
+A chave do provedor não é configurada aqui: ela vive no `.env` da raiz de dados
+(`~/.harnessdeck/.env`), lido pela extensão na ativação.
+
 Esta é uma implementação própria, não um fork do código da extensão
 `vithrive.deepseek-harness-vscode`. A decisão está em [docs/plano.md](../../docs/plano.md) e
 [docs/status.md](../../docs/status.md): a extensão instalada é um singleton (uma `activeView`, um
