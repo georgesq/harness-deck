@@ -48,6 +48,105 @@ export function profileDir(home: string, entry: HarnessEntry): string {
 }
 
 /**
+ * Merge a freshly generated patch with the patch already on disk.
+ *
+ * The profile patch is not only ours: the DSH config editor writes the model the
+ * user picked in the harness UI into the `agent-default-model` row of this very
+ * file (`dsh-config-editor/lib/index.js`, which rewrites the row in place and
+ * keeps everything else). Regenerating the file wholesale would silently undo
+ * that choice on the next `up`, so the model row is the user's from the moment
+ * it exists and the registry only seeds it. Every other row stays ours and is
+ * refreshed from the registry.
+ *
+ * @param generated - the patch this registry entry produces.
+ * @param existing - the patch currently on disk.
+ * @returns the merged patch.
+ */
+export function mergeProfilePatch(generated: string, existing: string): string {
+  const generatedSplit = splitPatchBlocks(generated);
+  const existingSplit = splitPatchBlocks(existing);
+  const existingBlocks = indexPatchBlocks(existingSplit.blocks);
+  const keep = new Set<string>();
+  // Rows owned by the running harness: the user's model choice, and the route
+  // the model selector needs. Both come from the DSH side once the profile ran.
+  for (const id of ['agent-default-model', 'llm-pi-ai']) {
+    if (existingBlocks.has(id)) keep.add(id);
+  }
+  const blocks: string[] = [];
+  for (const block of generatedSplit.blocks) {
+    if (block.id !== undefined && keep.has(block.id)) {
+      blocks.push(existingBlocks.get(block.id)!);
+    } else {
+      blocks.push(block.text);
+    }
+  }
+  // Rows the DSH added that this generator does not know about.
+  for (const [id, text] of existingBlocks) {
+    if (!generatedSplit.blocks.some((block) => block.id === id)) blocks.push(text);
+  }
+  const body = blocks.join('\n\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+  const header = generatedSplit.header === '' ? '' : `${generatedSplit.header}\n`;
+  return `${header}${body === '' ? '[]' : body}\n`;
+}
+
+/** Index patch rows by plugin id, keeping the last occurrence. */
+function indexPatchBlocks(blocks: PatchBlock[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const block of blocks) {
+    if (block.id !== undefined) index.set(block.id, block.text);
+  }
+  return index;
+}
+
+/** One row of a profile patch: its plugin id, when it has one, and its text. */
+interface PatchBlock {
+  id?: string;
+  text: string;
+}
+
+/** A profile patch split into its leading comment and its top-level rows. */
+interface SplitPatch {
+  header: string;
+  blocks: PatchBlock[];
+}
+
+/**
+ * Split a profile patch into its leading comment and its top-level rows. Only the
+ * shape this generator writes is supported: one row per `- ` line at column zero,
+ * its `id` on the next indented line.
+ */
+function splitPatchBlocks(patch: string): SplitPatch {
+  const lines = patch.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex((line) => line.startsWith('- ') || line === '-' || line === '[]');
+  if (start < 0) return { header: lines.join('\n').trimEnd(), blocks: [] };
+  const header = lines.slice(0, start).join('\n').trimEnd();
+  const blocks: PatchBlock[] = [];
+  let current: { id?: string; lines: string[] } | undefined;
+  const flush = (): void => {
+    if (current === undefined) return;
+    const text = current.lines.join('\n').trimEnd();
+    if (text !== '') blocks.push({ ...(current.id === undefined ? {} : { id: current.id }), text });
+    current = undefined;
+  };
+  for (const line of lines.slice(start)) {
+    if (line.startsWith('- ') || line === '-' || line === '[]') {
+      flush();
+      const inline = /^- id:\s*(\S+)\s*$/.exec(line);
+      current = inline === null ? { lines: [line] } : { id: inline[1], lines: [line] };
+      continue;
+    }
+    if (current === undefined) continue;
+    // A row may name itself on the dash line (`- id: x`) or on the next one
+    // (`- insert:` followed by an indented list, whose ids are not this row's).
+    const id = current.lines.length === 1 ? /^\s+id:\s*(\S+)\s*$/.exec(line) : null;
+    if (id !== null && current.id === undefined) current.id = id[1];
+    current.lines.push(line);
+  }
+  flush();
+  return { header, blocks };
+}
+
+/**
  * Body of the generated `package.json` of a profile.
  *
  * Same shape as `initProfile` in `@deepseek-ai/dsh-app-boot` (lib/index.js:576):
@@ -168,8 +267,9 @@ export async function materializeProfile(
   }
 
   const patchPath = join(dir, 'cordis.patch.yml');
-  const nextPatch = profilePatchYml(entry);
-  if ((await readIfExists(patchPath)) !== nextPatch) {
+  const existingPatch = await readIfExists(patchPath);
+  const nextPatch = existingPatch === undefined ? profilePatchYml(entry) : mergeProfilePatch(profilePatchYml(entry), existingPatch);
+  if (existingPatch !== nextPatch) {
     await writeFile(patchPath, nextPatch, 'utf8');
     written.push(patchPath);
   }
