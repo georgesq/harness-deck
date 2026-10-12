@@ -3,7 +3,7 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 15:20 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 15:55 (America/Sao_Paulo)
 
 ## Agora
 
@@ -23,6 +23,10 @@
 - [x] **Item 2.4 iniciado: painel do VS Code.** `packages/harness-deck-vscode` (implementação própria,
   não fork) abre **uma aba por harness** na mesma janela. Compila limpo e passa em teste sem VS Code
   (`node test/smoke.mjs`). Falta empacotar o `.vsix` e instalar.
+- [x] **Credenciais concentradas em `<raiz>/.env`** (decisão do dono). CLI e painel leem o arquivo e
+  entregam as variáveis ao harness; `~/.bashrc` não é mais caminho de chave. Ver seção abaixo.
+- [ ] **Rotacionar a chave do OpenRouter** — ela foi impressa em texto puro no transcript desta
+  sessão. Colar a chave nova em `~/.harnessdeck/.env` (arquivo já criado, modo `600`, campo vazio).
 
 ## Como o dono escolhe harness e provedor/modelo (decidido em 12/10/2026)
 
@@ -50,6 +54,39 @@ linhas `agent-default-model` e `llm-pi-ai` pertencem ao harness que já rodou: o
 na primeira materialização e atualiza o resto. Coberto por `packages/harness-deck-launcher/test/merge-patch.test.ts`
 (9 verificações, incluindo idempotência) e conferido na raiz real: troquei o modelo no perfil do
 `claude`, subi com `up` e a escolha sobreviveu.
+
+## Credenciais: `<raiz>/.env` é a única fonte (decidido em 12/10/2026)
+
+**Problema:** nem o VS Code nem o processo que sobe o DSH herdam um shell interativo. Chave
+exportada em `~/.bashrc` **não chega a ninguém**: o harness sobe e o modelo falha (observado no
+`claude`, aviso do lançador).
+
+**Decisão do dono:** as chaves de provedor ficam **só** em `<raiz do harness-deck>/.env`
+(`~/.harnessdeck/.env`, modo `600`, fora do git). O CLI e o painel do VS Code leem esse arquivo e
+entregam as variáveis ao processo do harness.
+
+Implementado:
+
+- `packages/harness-deck-launcher/src/registry.ts`: `ENV_FILE`, `envFilePath()`, `loadEnvFile()` e
+  `parseEnvFile()` (formato shell: `KEY=valor`, aceita `export`, aspas e `#`; arquivo ausente é
+  vazio, não erro).
+- `packages/harness-deck-launcher/src/launcher.ts`: o `spawn` monta o ambiente como
+  `.env` → `process.env` → variáveis do provedor → `options.env`. **O ambiente real tem
+  precedência**, então um `KEY=… harness-deck up` avulso continua funcionando.
+- `packages/harness-deck-launcher/src/cli.ts`: o aviso de credencial agora diz se falta no ambiente
+  **e** no `.env`.
+- `packages/harness-deck-vscode/src/registry.ts` e `src/processes.ts` e `src/extension.ts`: o painel
+  lê o mesmo `.env` na ativação, registra no canal de saída **quais** variáveis carregou (nunca os
+  valores) e repassa ao `spawn`.
+
+**Verificado:** num deck de teste (`.run/deck-env`, porta 3199) com um `.env` contendo
+`OPENROUTER_API_KEY` entre aspas, `export DEEPSEEK_API_KEY` e uma linha malformada, o `up` subiu o
+harness e o `/proc/<pid>/environ` do filho mostrou as duas variáveis preenchidas e a malformada
+ignorada.
+
+**Pendência do dono:** a chave do OpenRouter foi impressa em texto puro no transcript desta sessão;
+deve ser **rotacionada**, e a chave nova colada em `~/.harnessdeck/.env` (o arquivo já está lá, com
+o campo vazio e a explicação).
 
 ## Por que implementação própria e não fork (item 2.4)
 
