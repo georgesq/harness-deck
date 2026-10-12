@@ -1,0 +1,151 @@
+{
+  "name": "harness-deck-vscode",
+  "displayName": "Harness Deck",
+  "description": "Abre varios harness de agente (DSH, Claude Code e outros via ACP) na mesma janela do VS Code, cada um com o seu proprio processo, porta e workspaces.",
+  "version": "0.1.0",
+  "publisher": "georgesq",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./lib/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:harnessDeck.harnesses",
+    "onCommand:harnessDeck.openHarness",
+    "onCommand:harnessDeck.startHarness",
+    "onCommand:harnessDeck.stopHarness",
+    "onCommand:harnessDeck.restartHarness",
+    "onCommand:harnessDeck.refresh",
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "Harness Deck",
+      "properties": {
+        "harnessDeck.home": {
+          "type": "string",
+          "default": "",
+          "description": "Raiz de dados do harness-deck (registro e DSH_HOMEs). Vazio = $HARNESS_DECK_HOME ou ~/.harnessdeck."
+        },
+        "harnessDeck.dshCommand": {
+          "type": "string",
+          "default": "dsh",
+          "description": "Comando do DSH (default: resolvido no PATH)."
+        },
+        "harnessDeck.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Subir o harness ao abrir o painel, quando ele ainda nao estiver no ar."
+        },
+        "harnessDeck.stopOnExit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Encerrar, ao fechar o VS Code, os harnesses que esta extensao subiu (nao toca em processo que voce subiu a mao)."
+        },
+        "harnessDeck.openSystemBrowser": {
+          "type": "boolean",
+          "default": false,
+          "description": "Abrir tambem no navegador do sistema ao subir um harness."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "harness-deck",
+          "title": "Harness Deck",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "harness-deck": [
+        {
+          "id": "harnessDeck.harnesses",
+          "name": "Harnesses"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "harnessDeck.refresh",
+        "title": "Harness Deck: Atualizar lista",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "harnessDeck.openHarness",
+        "title": "Harness Deck: Abrir harness"
+      },
+      {
+        "command": "harnessDeck.startHarness",
+        "title": "Harness Deck: Subir harness",
+        "icon": "$(play)"
+      },
+      {
+        "command": "harnessDeck.stopHarness",
+        "title": "Harness Deck: Parar harness",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "harnessDeck.restartHarness",
+        "title": "Harness Deck: Reiniciar harness",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "harnessDeck.openInBrowser",
+        "title": "Harness Deck: Abrir no navegador"
+      },
+      {
+        "command": "harnessDeck.showLog",
+        "title": "Harness Deck: Ver log do harness"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "harnessDeck.refresh",
+          "when": "view == harnessDeck.harnesses",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "harnessDeck.openHarness",
+          "when": "view == harnessDeck.harnesses",
+          "group": "inline"
+        },
+        {
+          "command": "harnessDeck.startHarness",
+          "when": "view == harnessDeck.harnesses && viewItem == harnessStopped",
+          "group": "inline"
+        },
+        {
+          "command": "harnessDeck.stopHarness",
+          "when": "view == harnessDeck.harnesses && viewItem == harnessRunning",
+          "group": "inline"
+        },
+        {
+          "command": "harnessDeck.restartHarness",
+          "when": "view == harnessDeck.harnesses",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -p tsconfig.json --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.3"
+  }
+}
