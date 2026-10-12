@@ -178,22 +178,21 @@ export function profilePatchYml(entry: HarnessEntry): string {
     '#   harness-deck add <name> --engine <dsh|claude-code> --port <port>',
     `# harness: ${entry.name} (engine: ${entry.engine})`,
     '#',
-    '# One AgentFactory per DSH process: disable the default loop and insert the',
-    '# ACP bridge. For engine "dsh" this file is an empty patch.',
   ];
-  if (entry.engine !== 'claude-code') {
-    lines.push('[]', '');
-    return lines.join('\n');
+  const head = lines.length;
+  if (entry.engine === 'claude-code') {
+    lines.push(
+      '# One AgentFactory per DSH process: the Claude Code engine disables the',
+      '# default loop and inserts the ACP bridge here.',
+      '- id: agent-loop',
+      '  disabled: true',
+      '',
+      '- insert:',
+      `    - id: ${CLAUDE_CODE_PLUGIN}`,
+      `      name: ${CLAUDE_CODE_PLUGIN}`,
+      '',
+    );
   }
-  lines.push(
-    '- id: agent-loop',
-    '  disabled: true',
-    '',
-    '- insert:',
-    `    - id: ${CLAUDE_CODE_PLUGIN}`,
-    `      name: ${CLAUDE_CODE_PLUGIN}`,
-    '',
-  );
   if (entry.providerBaseUrl) {
     lines.push(`# Provider endpoint for this harness (from the registry).`);
     lines.push(`# Set ${entry.providerApiKeyEnv ?? 'ANTHROPIC_API_KEY'} in the environment before \`up\`.`);
@@ -201,9 +200,9 @@ export function profilePatchYml(entry: HarnessEntry): string {
   if (entry.provider) {
     const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
     lines.push(
-      '# Provider route. The bridge hands the model call to claude-agent-acp, but the',
-      '# DSH still requires a registered route for the model selector and the session',
-      '# controller to boot.',
+      entry.engine === 'claude-code'
+        ? '# Provider route. The bridge hands the model call to claude-agent-acp, but the\n# DSH still requires a registered route for the model selector and the session\n# controller to boot.'
+        : '# Provider route, from the registry: this is the model the DSH engine calls.',
       '- id: agent-default-model',
       '  name: "@deepseek-ai/dsh-agent-default-model"',
       '  config:',
@@ -226,6 +225,7 @@ export function profilePatchYml(entry: HarnessEntry): string {
       '',
     );
   }
+  if (lines.length === head) lines.push('[]');
   lines.push('');
   return lines.join('\n');
 }
