@@ -23,7 +23,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 | 1.1 | Agent SDK falando com uma rota Anthropic-shaped (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
 | 1.3 | Criar sessão e ver a resposta em streaming no chat — **substituído pela ponte ACP (B.1–B.5), ver abaixo** | ✅ resolvido por B.3 |
-| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ⏳ |
+| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ✅ resolvido por B.4 |
 | 1.5 | Retomar sessão depois de reiniciar — **vira B.5** | ⏳ |
 
 **Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada.
@@ -50,7 +50,7 @@ de protocolo": o adapter já faz a parte difícil, o plugin só traduz `session/
 | B.1 | Subir `claude-agent-acp` como subprocesso; handshake ACP (`initialize` → `new_session`) | protocolo padrão, sem UI ainda | ✅ |
 | B.2 | Tradução de ida: `session/update` (texto chegando) → `SessionEvent` do DSH (`assistant/message` + `agent/assistant-stream`, ver [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md)) | só texto, sem ferramenta | ✅ texto durável **e** ao vivo, com frames densos verificados em provedor real (OpenRouter) |
 | B.3 | Teste manual: pergunta simples no perfil isolado, resposta real do Claude Code no chat da Web GUI, em streaming | fecha o portão do F1 (streaming) | ✅ resposta desenhada **crescendo** no chat da GUI (navegador sem cabeça no perfil isolado, provedor real); o teste achou e corrigiu dois defeitos de escopo do agente — ver [status.md](status.md) |
-| B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ⏳ |
+| B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ✅ **aprovado e recusado, os dois observados rodando** (12/10/2026). O bridge registra `session/request_permission` e roteia a pergunta para o serviço `approval` do DSH — ver [status.md](status.md). **Falta:** o tool call em si não é desenhado na trajetória (o `session/update` de tool ainda é ignorado) |
 | B.5 | Retomada de sessão (era 1.5) | depois do B.3 provado | ⏳ |
 
 Corte do meio-termo: **B.1–B.3 primeiro**, prova o portão do F1 sem entrar em aprovação de
