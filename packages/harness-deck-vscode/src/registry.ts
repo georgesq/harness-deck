@@ -199,6 +199,18 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
   env.ANTHROPIC_BASE_URL = baseUrl;
   const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
+  // The CLI only accepts model ids its own catalog describes, and the provider
+  // only accepts its own slugs: the bridge maps one onto the other. Without
+  // this the harness dies on "There's an issue with the selected model".
+  if (entry.provider.model) {
+    const catalog = catalogModelId(entry.provider.model);
+    const fast = catalogModelId(FAST_MODEL_SLUG);
+    env.ANTHROPIC_MODEL = catalog;
+    env.ANTHROPIC_SMALL_FAST_MODEL = fast;
+    env.HARNESS_DECK_MODEL_MAP = JSON.stringify({ [catalog]: entry.provider.model, [fast]: FAST_MODEL_SLUG });
+    env.HARNESS_DECK_UPSTREAM_URL = baseUrl;
+    if (key) env.HARNESS_DECK_UPSTREAM_KEY = key;
+  }
   return env;
 }
 
@@ -207,3 +219,21 @@ export const PROVIDER_BASE_URLS: Record<HarnessProvider['kind'], string> = {
   openrouter: 'https://openrouter.ai/api/v1',
   deepseek: 'https://api.deepseek.com/v1',
 };
+
+/**
+ * Cheap model the Claude Code CLI uses for background work (titles, summaries).
+ * Its own default is a Haiku id the provider does not serve.
+ */
+export const FAST_MODEL_SLUG = 'anthropic/claude-haiku-5.5';
+
+/**
+ * The catalog id the Claude Code CLI expects for a provider slug.
+ *
+ * The CLI refuses any model id this version's hardcoded catalog does not
+ * describe, so `anthropic/claude-sonnet-5.5` never leaves the machine. It gets
+ * `claude-sonnet-5-5` and the bridge maps it back to the slug.
+ */
+export function catalogModelId(slug: string): string {
+  const bare = slug.slice(slug.lastIndexOf('/') + 1);
+  return bare.replace(/\./g, '-');
+}
