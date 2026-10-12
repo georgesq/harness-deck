@@ -60,7 +60,7 @@ ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 
 | # | Item | Status |
 |---|---|---|
-| 2.0 | **Escolher o harness ao criar o workspace** (pedido do dono em 12/10/2026): hoje o harness é fixado no perfil que se sobe — `agent-loop` desligado, plugin instalado — e workspace no DSH é só uma pasta, sem harness. Ver "Como o harness pode ser escolhido" abaixo | ⏳ decisão de arquitetura pendente |
+| 2.0 | **Escolher o harness ao criar o workspace** (pedido do dono em 12/10/2026): hoje o harness é fixado no perfil que se sobe — `agent-loop` desligado, plugin instalado — e workspace no DSH é só uma pasta, sem harness. Ver "Como o harness pode ser escolhido" abaixo | ✅ **decidido pelo dono em 12/10/2026: caminho A agora, caminho B depois** — começa em 2.1 |
 | 2.1 | Registro de harness: um perfil por harness em `~/.harnessdeck`, cada um com porta própria | ⏳ |
 | 2.2 | Verificar se a lista de workspaces fica separada por perfil ou se precisa de `DSH_HOME` por harness | ⏳ |
 | 2.3 | Lançador: sobe e para os processos de todos os harness registrados | ⏳ |
