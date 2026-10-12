@@ -36,19 +36,35 @@ import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import type { Writable as NodeWritable, Readable as NodeReadable } from 'node:stream';
 import { Readable, Writable } from 'node:stream';
 import { Context, Service } from '@deepseek-ai/cordis';
-import type {
-  Agent,
-  AgentFactory,
-  AgentHandle,
-  AgentOptions,
-  AgentStatus,
-  CreateAgentOptions,
-  Inbox,
-  InboxTarget,
-  ResumeAgentOptions,
+import {
+  agentEvents,
+  type Agent,
+  type AgentEventDispatch,
+  type AgentFactory,
+  type AgentHandle,
+  type AgentOptions,
+  type AgentStatus,
+  type AssistantStreamFrame,
+  type CreateAgentOptions,
+  type Inbox,
+  type InboxTarget,
+  type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
-import type { Session } from '@deepseek-ai/dsh-session';
-import { createAssistantMessage, type MessageId, type UserMessage } from '@deepseek-ai/dsh-llm';
+import type { Session, SessionSeq, TurnEndReason } from '@deepseek-ai/dsh-session';
+import {
+  AssistantStreamAccumulator,
+  BlockAssembler,
+  EMPTY_RESPONSE_CODE,
+  LlmAttemptId,
+  LlmError,
+  createAssistantMessage,
+  errorChain,
+  type AssistantStreamRecord,
+  type LlmFailure,
+  type MessageId,
+  type StreamChunk,
+  type UserMessage,
+} from '@deepseek-ai/dsh-llm';
 import * as acp from '@agentclientprotocol/sdk';
 
 declare module '@deepseek-ai/cordis' {
@@ -285,6 +301,156 @@ class ClaudeCodeAgent implements Agent {
 }
 
 /**
+ * Live framing for one assistant attempt, reproducing the shape the default
+ * engine publishes through its private `AssistantStreamAttempt`
+ * (`dsh-agent-loop/lib/index.js:354`).
+ *
+ * The Web GUI folds these frames into a reconnect baseline and requires them
+ * to be DENSE: `revision` must grow by exactly one per frame, and `index`
+ * must be the zero-based position within the attempt — a gap makes the
+ * consumer drop the attempt (`dsh-api-session-controller/lib/index.js:1254`
+ * and `:1275`). Both counters therefore live here and are never reused
+ * across attempts.
+ *
+ * The same chunk sequence feeds two outputs: the transient frames above and
+ * the compact `stream` the durable `assistant/message` embeds, so a client
+ * that reloads the session reconstructs the same text it saw live.
+ */
+class LiveAssistantAttempt {
+  private readonly attemptId: LlmAttemptId;
+  private readonly accumulator = new AssistantStreamAccumulator();
+  private readonly assembler = new BlockAssembler();
+  private readonly nextRevision: () => number;
+  private readonly turn: number;
+  private readonly step: number;
+  private readonly emit: (frame: AssistantStreamFrame) => void;
+  private index = 0;
+  private text = '';
+  private blockOpen = false;
+  private terminal = false;
+
+  /**
+   * @param sessionId - identity embedded in the attempt id.
+   * @param attempt - attached-session-local attempt counter.
+   * @param nextRevision - allocates the next frame revision.
+   * @param turn - durable turn owning the attempt.
+   * @param step - durable step owning the attempt.
+   * @param emit - agent-scoped frame publisher.
+   */
+  constructor(
+    sessionId: Session['id'],
+    attempt: number,
+    nextRevision: () => number,
+    turn: number,
+    step: number,
+    emit: (frame: AssistantStreamFrame) => void,
+  ) {
+    this.attemptId = LlmAttemptId(`${sessionId}:${attempt}`);
+    this.nextRevision = nextRevision;
+    this.turn = turn;
+    this.step = step;
+    this.emit = emit;
+  }
+
+  /** Publish the opening marker before the first delivered chunk. */
+  start(): void {
+    this.emit({
+      type: 'start',
+      attemptId: this.attemptId,
+      revision: this.nextRevision(),
+      turn: this.turn,
+      step: this.step,
+    });
+  }
+
+  /**
+   * Publish one visible text delta.
+   *
+   * ACP reports text as bare deltas with no block structure, so this opens
+   * the single text block on the first delta and keeps `index` at 0 for all
+   * of them — one assistant message carries one text block here.
+   */
+  pushText(text: string): void {
+    if (!this.blockOpen) {
+      this.blockOpen = true;
+      this.push({ type: 'block-start', index: 0, blockType: 'text' });
+    }
+    this.text += text;
+    this.push({ type: 'text-delta', index: 0, text });
+  }
+
+  /**
+   * Close the stream, commit the durable settlement, and publish its seq.
+   * @param eventType - durable event type this attempt settles into:
+   * `assistant/message` when the turn produced model-visible text,
+   * `assistant/attempt` when it did not.
+   * @param append - synchronous durable append returning its committed seq.
+   */
+  settle(eventType: 'assistant/message' | 'assistant/attempt', append: () => SessionSeq): void {
+    if (this.blockOpen) {
+      this.push({ type: 'block-end', index: 0, block: { type: 'text', text: this.text } });
+    }
+    this.push({ type: 'finish', reason: { kind: 'stop' } });
+    let seq: SessionSeq;
+    try {
+      seq = append();
+    } catch (error) {
+      this.abandon();
+      throw error;
+    }
+    this.terminal = true;
+    this.emit({
+      type: 'end',
+      attemptId: this.attemptId,
+      revision: this.nextRevision(),
+      index: this.index,
+      outcome: { kind: 'committed', eventType, seq },
+    });
+  }
+
+  /** Publish abandonment when no durable settlement can be committed. */
+  abandon(): void {
+    if (this.terminal) return;
+    this.terminal = true;
+    this.emit({
+      type: 'end',
+      attemptId: this.attemptId,
+      revision: this.nextRevision(),
+      index: this.index,
+      outcome: { kind: 'abandoned' },
+    });
+  }
+
+  /** Whether any model-visible text was streamed during this attempt. */
+  get hasVisibleText(): boolean {
+    return this.text.length > 0;
+  }
+
+  /** Compact stream for the durable settlement event. */
+  get stream(): AssistantStreamRecord[] {
+    return [...this.accumulator.snapshot()];
+  }
+
+  /** Canonical completed-message blocks assembled from the same chunks. */
+  blocks(): ReturnType<BlockAssembler['blocks']> {
+    return this.assembler.blocks();
+  }
+
+  private push(chunk: StreamChunk): void {
+    const timed = this.accumulator.push({ time: Date.now(), chunk });
+    this.assembler.push(timed.chunk);
+    this.emit({
+      type: 'chunk',
+      attemptId: this.attemptId,
+      revision: this.nextRevision(),
+      index: this.index++,
+      time: timed.time,
+      chunk: timed.chunk,
+    });
+  }
+}
+
+/**
  * Concrete `AgentFactory` for the Claude Code engine.
  *
  * Mirrors the registration pattern read from
@@ -386,7 +552,13 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     const child = spawnAcpAgent(binPath, cwd);
     const bridgeAbort = new AbortController();
 
-    const bridgeDone = this.runBridge(agent, child, cwd, bridgeAbort.signal).catch((error: unknown) => {
+    // Agent-scoped dispatcher, built once per agent like `dsh-agent-loop`
+    // does (`lib/index.js:777`). It is what carries `agent/assistant-stream`
+    // — and, later, the tool approval events of item B.4 — to the process,
+    // where the session controller listens with `{ global: true }`.
+    const dispatch = agentEvents(this.runtime.ctx, agent);
+
+    const bridgeDone = this.runBridge(agent, child, cwd, dispatch, bridgeAbort.signal).catch((error: unknown) => {
       ownerCtx.logger.error(`claudeCodeAgentLoop: ACP bridge for session "${session.id}" failed: ${String(error)}`);
     });
 
@@ -409,13 +581,15 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
    * translated into one DSH turn.
    *
    * Item B.2 scope: only `agent_message_chunk` text updates are translated
-   * (`turn/start` -> `step/start` -> `assistant/message` -> `step/end` ->
-   * `turn/end`). Tool calls are intentionally ignored here (B.4).
+   * (`turn/start` -> `step/start` -> live frames -> `assistant/message` ->
+   * `step/end` -> `turn/end`). Tool calls are intentionally ignored here
+   * (B.4).
    */
   private async runBridge(
     agent: ClaudeCodeAgent,
     child: AcpChildProcess,
     cwd: string,
+    dispatch: AgentEventDispatch,
     signal: AbortSignal,
   ): Promise<void> {
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
@@ -429,6 +603,12 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
 
       return ctx.buildSession(cwd).withSession(async (acpSession) => {
         let turn = 0;
+        let attempt = 0;
+        // One revision counter per agent lifecycle: the GUI's accumulator
+        // rejects any frame that does not follow the previous one by exactly
+        // one, so attempts share the counter instead of restarting it.
+        let revision = 0;
+        const nextRevision = () => (revision += 1);
         for (;;) {
           const userMessage = await agent.waitForWork(signal);
           if (userMessage === undefined) return;
@@ -448,33 +628,90 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
             .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
             .map((block) => block.text)
             .join('\n');
-          acpSession.prompt(promptText);
-
-          const chunks: string[] = [];
-          for (;;) {
-            const update = await acpSession.nextUpdate();
-            if (update.kind === 'stop') break;
-            if (update.update.sessionUpdate === 'agent_message_chunk' && update.update.content.type === 'text') {
-              chunks.push(update.update.content.text);
-            }
-          }
-
-          session.append(
-            'assistant/message',
-            {
-              turn,
-              step,
-              message: createAssistantMessage({
-                content: [{ type: 'text', text: chunks.join('') }],
-                source: { provider: 'claude-agent-acp', model: 'claude-code' },
-              }),
-              stream: [],
-            },
-            { surfaceOp: 'append' },
+          const live = new LiveAssistantAttempt(
+            session.id,
+            (attempt += 1),
+            nextRevision,
+            turn,
+            step,
+            (frame) => dispatch.emit('agent/assistant-stream', { frame }),
           );
-          session.append('step/end', { turn, step });
-          session.append('turn/end', { turn, reason: { kind: 'completed' } });
-          agent.markIdle();
+          live.start();
+
+          // Records the attempt without inventing model-visible history: the
+          // same settlement the default engine uses for an attempt that never
+          // became a message (`dsh-agent-loop/lib/index.js:1101`).
+          const settleAttempt = () =>
+            live.settle('assistant/attempt', () =>
+              session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
+            );
+
+          // `settle` commits the durable event and only then publishes the
+          // terminal frame carrying that event's seq, so a client can never
+          // see the live stream end before the text it renders is durable.
+          const settleMessage = () =>
+            live.settle('assistant/message', () =>
+              session.append(
+                'assistant/message',
+                {
+                  turn,
+                  step,
+                  message: createAssistantMessage({
+                    content: live.blocks(),
+                    source: { provider: 'claude-agent-acp', model: 'claude-code' },
+                  }),
+                  stream: live.stream,
+                },
+                { surfaceOp: 'append' },
+              ).seq,
+            );
+
+          let turnEnds: TurnEndReason = { kind: 'completed' };
+          try {
+            acpSession.prompt(promptText);
+
+            for (;;) {
+              const update = await acpSession.nextUpdate();
+              if (update.kind === 'stop') break;
+              if (update.update.sessionUpdate === 'agent_message_chunk' && update.update.content.type === 'text') {
+                live.pushText(update.update.content.text);
+              }
+            }
+
+            if (live.hasVisibleText) {
+              settleMessage();
+            } else {
+              // An empty turn is a failure, not a success: Claude Code
+              // resolves its pending prompt when its own process dies
+              // mid-turn, and calling that `completed` would draw an empty
+              // answer in the chat as if it had worked. `EMPTY_RESPONSE` is
+              // the code the default engine already uses for this case, and
+              // its retry policy already treats it as safe to repeat.
+              settleAttempt();
+              turnEnds = {
+                kind: 'error',
+                error: {
+                  message: 'the ACP agent ended the turn without producing any text',
+                  code: EMPTY_RESPONSE_CODE,
+                },
+              };
+            }
+          } catch (error) {
+            // An attempt that never publishes its terminal frame leaves the
+            // GUI holding an open live stream forever, so every failure has
+            // to close it here.
+            if (live.hasVisibleText) settleAttempt();
+            else live.abandon();
+            turnEnds = {
+              kind: 'error',
+              error:
+                error instanceof LlmError ? error.failure : { message: errorChain(error), code: 'UNKNOWN' },
+            };
+          } finally {
+            session.append('step/end', { turn, step });
+            session.append('turn/end', { turn, reason: turnEnds });
+            agent.markIdle();
+          }
         }
       });
     });
