@@ -4,10 +4,23 @@ Uma UI única para trabalhar em **vários projetos** com **qualquer harness** de
 que roda o agente: loop, ferramentas, sessão). Primeiros harness suportados: **DSH** (DeepSeek
 Harness) e **Claude Code**. Outros entram como plugin.
 
+MIT. Contribuição pelo protocolo em [CONTRIBUTING.md](CONTRIBUTING.md) — a branch `main` é protegida,
+tudo entra por pull request.
+
 ## Estado
 
-**Nada implementado ainda.** Análise em [docs/analise-inicial.md](docs/analise-inicial.md);
-andamento em [docs/plano.md](docs/plano.md).
+Funciona de ponta a ponta para **um harness por processo**, aberto no navegador ou em aba do VS Code:
+
+- CLI `harness-deck` (registro, materialização do perfil, subir/parar, log) em
+  [packages/harness-deck-launcher](packages/harness-deck-launcher);
+- painel do VS Code com uma aba por harness em
+  [packages/harness-deck-vscode](packages/harness-deck-vscode);
+- ponte ACP que faz o DSH rodar o loop do Claude Code em
+  [packages/harness-deck-claude-code](packages/harness-deck-claude-code).
+
+Verificado: os dois harnesses sobem, o painel abre cada um na própria aba, a escolha de modelo
+sobrevive a reinício e uma mensagem no chat completa com o modelo configurado. O que está pronto,
+o que foi verificado e o que falta: [docs/status.md](docs/status.md).
 
 ## Objetivo
 
@@ -18,7 +31,7 @@ andamento em [docs/plano.md](docs/plano.md).
 3. Vários harness registrados abertos juntos na mesma janela do VS Code, cada um com os próprios
    workspaces (REQ-01 e REQ-02 em [docs/analise-inicial.md](docs/analise-inicial.md)).
 4. Suporte ao [Paperclip](https://github.com/paperclipai/paperclip) (control plane: heartbeat,
-   tarefas, orçamento), configurável dentro da própria UI.
+   tarefas, orçamento), configurável dentro da própria UI. **Não iniciado.**
 
 ## Abordagem escolhida
 
@@ -28,4 +41,24 @@ adicionar harness como **plugin do DSH**. Detalhe e riscos em
 
 ## Como roda
 
-Não localizado — será definido na implementação.
+Pré-requisitos: **Node 24+** e o DSH instalado (`npm i -g @deepseek-ai/dsh`). A chave do provedor
+vai no `.env` da raiz de dados, nunca no repositório — veja
+[docs/status.md](docs/status.md#credenciais-raizenvex-a-única-fonte-decidido-em-12102026).
+
+```bash
+# 1. chave do provedor (uma vez)
+printf 'OPENROUTER_API_KEY=sk-or-v1-...\n' > ~/.harnessdeck/.env
+chmod 600 ~/.harnessdeck/.env
+
+# 2. registrar os harnesses
+CLI=packages/harness-deck-launcher/bin/harness-deck.mjs
+node $CLI add dsh    --engine dsh         --port 3130
+node $CLI add claude --engine claude-code --port 3131
+
+# 3. subir e abrir a GUI (o comando imprime a URL com o token)
+node $CLI up --wait 45000
+node $CLI down
+```
+
+O comando `harness-deck` no PATH depende de publicar o pacote no npm — ainda **não publicado**.
+Enquanto isso, chame o `bin/harness-deck.mjs` pelo caminho.
