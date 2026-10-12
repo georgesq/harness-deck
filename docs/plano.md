@@ -22,29 +22,39 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 |---|---|---|
 | 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
-| 1.3 | Criar sessão e ver a resposta em streaming no chat — **dividido em 1.3.a–d, ver abaixo** | ⏳ |
-| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI | ⏳ |
-| 1.5 | Retomar sessão depois de reiniciar | ⏳ |
+| 1.3 | Criar sessão e ver a resposta em streaming no chat — **substituído pela ponte ACP (B.1–B.5), ver abaixo** | ⏳ |
+| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ⏳ |
+| 1.5 | Retomar sessão depois de reiniciar — **vira B.5** | ⏳ |
 
 **Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada.
-Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 
-### Item 1.3, dividido (achado em 12/10/2026, lendo `dsh-agent-loop/lib/index.js`)
+### Decisão do dono em 12/10/2026: opção B (plugin reimplementando o motor) abandonada, opção C (ponte ACP) escolhida
 
-`AgentFactory.createAgent`/`resume` do `dsh-agent-loop` real (quase 2000 linhas) usa classes e
-métodos **privados** do próprio pacote (`SessionPreparation`, `this.prepare`, `ReactLoopAgent`,
-`AssistantStreamAttempt`) — não dá para copiar isso para o plugin do Claude Code; o próprio
-comentário do esqueleto (item 1.2) já avisa para não copiar a lógica interna, só o padrão de
-registro. O caminho certo é a API **pública** do `@deepseek-ai/dsh-session`
-(`ctx.sessions.prepare` + `Session.enter` + `Session.announce`, documentados no próprio pacote) e
-`Session.append(type, data, opts)` para o log de eventos — não as classes privadas do loop padrão.
+Achado ao investigar 1.3.b: o `Agent` público do DSH tem contrato completo (`inbox`, `status`,
+`cancel`, `send`/`followup`/`steer`, eventos `agent/*`) — implementá-lo do zero era escrever uma
+segunda versão do `dsh-agent-loop` (quase 2000 linhas), só troca o SDK por dentro. Caro demais para
+uma prova de conceito.
 
-| # | Item | Status |
-|---|---|---|
-| 1.3.a | Entender e documentar os `SessionEventType` mínimos para uma resposta de texto simples (sem ferramenta): o que o `dsh-agent-loop` emite por turno (`turn/start`, mensagem do usuário, `assistant/attempt`, fechamento) | ✅ [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md) |
-| 1.3.b | `createAgent` real: `ctx.sessions.prepare` → compor o `Agent` próprio → `enter` → `announce`, sem reusar classes privadas do `dsh-agent-loop` | ⏳ |
-| 1.3.c | Ligar o Claude Agent SDK: enviar o turno, consumir o stream do SDK, e append incremental de evento(s) de mensagem do assistente conforme chega | ⏳ |
-| 1.3.d | Teste manual: perfil isolado, uma pergunta simples, resposta aparece no chat da Web GUI em streaming | ⏳ |
+Confirmado por leitura de código e do repositório: `@deepseek-ai/dsh-acp` (instalado) faz o DSH ser
+**servidor** ACP (expõe agentes do DSH para fora); o caminho inverso — **DSH cliente** de um agente
+ACP externo — não existe em nenhum pacote instalado. O
+[claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) (ex-`claude-code-acp`,
+projeto moveu de `zed-industries` para a org `agentclientprotocol`) já implementa o lado do agente:
+tool calls com permissão, streaming, subagentes, slash commands, MCP, tudo em npm
+(`@agentclientprotocol/claude-agent-acp`). A ponte muda de "reimplementar o motor" para "tradução
+de protocolo": o adapter já faz a parte difícil, o plugin só traduz `session/update` do ACP para
+`SessionEvent` do DSH e vice-versa.
+
+| # | Item | Escopo | Status |
+|---|---|---|---|
+| B.1 | Subir `claude-agent-acp` como subprocesso; handshake ACP (`initialize` → `new_session`) | protocolo padrão, sem UI ainda | ⏳ |
+| B.2 | Tradução de ida: `session/update` (texto chegando) → `SessionEvent` do DSH (`assistant/message` + `agent/assistant-stream`, ver [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md)) | só texto, sem ferramenta | ⏳ |
+| B.3 | Teste manual: pergunta simples no perfil isolado, resposta real do Claude Code no chat da Web GUI, em streaming | fecha o portão do F1 (streaming) | ⏳ |
+| B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ⏳ |
+| B.5 | Retomada de sessão (era 1.5) | depois do B.3 provado | ⏳ |
+
+Corte do meio-termo: **B.1–B.3 primeiro**, prova o portão do F1 sem entrar em aprovação de
+ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 
 ## F2 — Vários harness no VS Code (REQ-01, REQ-02)
 
