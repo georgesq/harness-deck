@@ -18,7 +18,16 @@ import {
   type Disposable,
   type ExtensionContext,
 } from 'vscode';
-import { credentialEnv, harnessLogPath, harnessUrl, loadRegistry, resolveHome, type HarnessEntry } from './registry';
+import {
+  credentialEnv,
+  envFilePath,
+  harnessLogPath,
+  harnessUrl,
+  loadEnvFile,
+  loadRegistry,
+  resolveHome,
+  type HarnessEntry,
+} from './registry';
 import { HarnessProcesses, type HarnessState } from './processes';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, revealHarnessPanel, updateHarnessPanel } from './panel';
@@ -30,6 +39,8 @@ let processes: HarnessProcesses | undefined;
 let tree: HarnessTree | undefined;
 let output: ReturnType<typeof window.createOutputChannel> | undefined;
 let poller: ReturnType<typeof setInterval> | undefined;
+/** Variables from `<deck home>/.env`, read at activation. */
+let envFile: Record<string, string> = {};
 
 /** Deck home from the settings, or the environment/default. */
 function deckHome(): string {
@@ -44,14 +55,19 @@ function dshCommand(): string {
 /** Build the process manager once per window. */
 function runtime(): HarnessProcesses {
   if (processes !== undefined) return processes;
-  processes = new HarnessProcesses(deckHome(), dshCommand(), {
-    onOutput: (entry, chunk) => output?.append(chunk),
-    onUrl: (entry, url) => output?.appendLine(`[${entry.name}] GUI em ${url}`),
-    onExit: (entry, code) => {
-      output?.appendLine(`[${entry.name}] processo saiu (code ${String(code)})`);
-      void refresh();
+  processes = new HarnessProcesses(
+    deckHome(),
+    dshCommand(),
+    {
+      onOutput: (entry, chunk) => output?.append(chunk),
+      onUrl: (entry, url) => output?.appendLine(`[${entry.name}] GUI em ${url}`),
+      onExit: (entry, code) => {
+        output?.appendLine(`[${entry.name}] processo saiu (code ${String(code)})`);
+        void refresh();
+      },
     },
-  });
+    envFile,
+  );
   return processes;
 }
 
@@ -199,6 +215,19 @@ export async function activate(context: ExtensionContext): Promise<void> {
   output = window.createOutputChannel('Harness Deck');
   context.subscriptions.push(output);
   output.appendLine(`Harness Deck: raiz de dados ${deckHome()}`);
+  // The extension host does not inherit an interactive shell: the provider keys
+  // come from the deck's own `.env`, never from `~/.bashrc`.
+  try {
+    envFile = await loadEnvFile(deckHome());
+    const names = Object.keys(envFile);
+    output.appendLine(
+      names.length === 0
+        ? `nenhuma variavel em ${envFilePath(deckHome())}`
+        : `variaveis carregadas de ${envFilePath(deckHome())}: ${names.join(', ')}`,
+    );
+  } catch (error) {
+    output.appendLine(`nao consegui ler ${envFilePath(deckHome())}: ${String(error)}`);
+  }
 
   tree = new HarnessTree(
     (entry) => runtime().inspect(entry),

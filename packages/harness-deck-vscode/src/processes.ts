@@ -13,6 +13,7 @@ import { connect } from 'node:net';
 import { dirname } from 'node:path';
 import {
   credentialEnv,
+  envFilePath,
   harnessHome,
   harnessLogPath,
   harnessPidPath,
@@ -97,6 +98,12 @@ export class HarnessProcesses {
     private readonly deckHome: string,
     private readonly dshCommand: string,
     private readonly events: HarnessEvents = {},
+    /**
+     * Variables read from `<deck home>/.env`. The extension host does not inherit
+     * an interactive shell, so this file — not `~/.bashrc` — is where the provider
+     * keys come from (owner's decision of 12/10/2026).
+     */
+    private readonly envFile: Record<string, string> = {},
   ) {}
 
   /** True when this extension started the harness in this window. */
@@ -158,8 +165,9 @@ export class HarnessProcesses {
       {
         cwd: harnessHome(this.deckHome, entry),
         env: {
+          ...this.envFile,
           ...process.env,
-          ...providerEnv(entry),
+          ...providerEnv(entry, this.envFile),
           DSH_HOME: harnessHome(this.deckHome, entry),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -169,8 +177,10 @@ export class HarnessProcesses {
     this.children.set(entry.name, child);
     this.startedByUs.set(entry.name, entry);
     const keyEnv = credentialEnv(entry);
-    if (!process.env[keyEnv]) {
-      log.write(`[vscode] aviso: ${keyEnv} nao esta no ambiente do VS Code; o modelo vai falhar\n`);
+    if (!process.env[keyEnv] && !this.envFile[keyEnv]) {
+      log.write(
+        `[vscode] aviso: ${keyEnv} nao esta no ambiente do VS Code nem em ${envFilePath(this.deckHome)}; o modelo vai falhar\n`,
+      );
     }
 
     const consume = (chunk: Buffer): void => {

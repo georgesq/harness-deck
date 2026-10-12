@@ -129,13 +129,66 @@ export function credentialEnv(entry: HarnessEntry): string {
   return entry.providerApiKeyEnv ?? entry.provider?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
 }
 
+/** File name of the credential file inside the harness-deck home. */
+export const ENV_FILE = '.env';
+
+/** Absolute path of the credential file inside a harness-deck home. */
+export function envFilePath(deckHome: string): string {
+  return join(deckHome, ENV_FILE);
+}
+
+/**
+ * Read the credential file of a harness-deck home.
+ *
+ * The owner decided on 12/10/2026 that the provider keys live in
+ * `<deck home>/.env` and only there: the VS Code extension host does not inherit
+ * an interactive shell, so a key exported in `~/.bashrc` never reaches the
+ * harness this panel starts. Format is shell `KEY=value`; a missing file is
+ * empty, not an error.
+ */
+export async function loadEnvFile(deckHome: string): Promise<Record<string, string>> {
+  let raw: string;
+  try {
+    raw = await readFile(envFilePath(deckHome), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw error;
+  }
+  return parseEnvFile(raw);
+}
+
+/** Parse the `KEY=value` text of a `.env` file. Mirrors the launcher. */
+export function parseEnvFile(raw: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const body = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trim() : trimmed;
+    const separator = body.indexOf('=');
+    if (separator <= 0) continue;
+    const key = body.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = body.slice(separator + 1).trim();
+    const quoted =
+      value.length > 1 &&
+      ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")));
+    if (quoted) value = value.slice(1, -1);
+    values[key] = value;
+  }
+  return values;
+}
+
 /**
  * Environment overrides a harness' child process needs.
  *
  * `claude-agent-acp` speaks the Anthropic wire format, so a non-Anthropic
  * provider has to arrive through `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`.
+ *
+ * @param entry - the harness being started.
+ * @param fromFile - variables read from the deck `.env`, which fill in a key the
+ *   extension host's own environment does not have.
  */
-export function providerEnv(entry: HarnessEntry): NodeJS.ProcessEnv {
+export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   if (entry.providerBaseUrl) {
     env.ANTHROPIC_BASE_URL = entry.providerBaseUrl;
@@ -144,7 +197,7 @@ export function providerEnv(entry: HarnessEntry): NodeJS.ProcessEnv {
   if (entry.engine !== 'claude-code' || !entry.provider) return env;
   const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
   env.ANTHROPIC_BASE_URL = baseUrl;
-  const key = process.env[entry.provider.apiKeyEnv];
+  const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
   return env;
 }
