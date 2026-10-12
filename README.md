@@ -6,8 +6,8 @@ Harness) e **Claude Code**. Outros entram como plugin.
 
 ## Estado
 
-**Nada implementado ainda.** O repositório tem só a análise inicial:
-[docs/analise-inicial.md](docs/analise-inicial.md).
+**Nada implementado ainda.** Análise em [docs/analise-inicial.md](docs/analise-inicial.md);
+andamento em [docs/plano.md](docs/plano.md).
 
 ## Objetivo
 
