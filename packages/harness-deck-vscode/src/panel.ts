@@ -16,6 +16,9 @@ export const VIEW_TYPE = 'harnessDeck.harness';
 /** Panels currently open, keyed by harness name. */
 const panels = new Map<string, WebviewPanel>();
 
+/** Signature of the state each open panel was last rendered with. */
+const rendered = new Map<string, string>();
+
 /** Nonce for the panel's own inline script. */
 function nonce(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -91,6 +94,16 @@ ${state.listening
 </html>`;
 }
 
+/** Everything the panel HTML depends on, as a comparable string. */
+export function panelSignature(state: HarnessState): string {
+  return [
+    state.listening ? 'up' : 'down',
+    state.managed ? 'managed' : 'external',
+    state.pid ?? '',
+    state.url,
+  ].join('|');
+}
+
 /** Options for {@link openHarnessPanel}. */
 export interface OpenOptions {
   /** Column to show the panel in. Defaults to `ViewColumn.Beside`. */
@@ -132,18 +145,29 @@ export function openHarnessPanel(
     { enableScripts: true, retainContextWhenHidden: true },
   );
   panels.set(entry.name, panel);
+  rendered.set(entry.name, panelSignature(state));
   panel.webview.html = renderPanelHtml(entry, state, nonce());
   panel.onDidDispose(() => {
     panels.delete(entry.name);
+    rendered.delete(entry.name);
     onDispose?.(entry.name);
   });
   return { panel, existing: false };
 }
 
-/** Re-render an open panel (after start/stop, or on refresh). */
+/**
+ * Re-render an open panel (after start/stop, or on refresh).
+ *
+ * Assigning `webview.html` reloads the iframe and throws away whatever the GUI
+ * had on screen, so an unchanged state is skipped: only a new URL — the token
+ * dies with the process that printed it — or a change of status repaints.
+ */
 export function updateHarnessPanel(entry: HarnessEntry, state: HarnessState): void {
   const panel = panels.get(entry.name);
   if (panel === undefined) return;
+  const signature = panelSignature(state);
+  if (rendered.get(entry.name) === signature) return;
+  rendered.set(entry.name, signature);
   panel.webview.html = renderPanelHtml(entry, state, nonce());
 }
 

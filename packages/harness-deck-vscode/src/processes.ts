@@ -162,14 +162,14 @@ export class HarnessProcesses {
     const pid = child?.pid ?? readPidFile(harnessPidPath(this.deckHome, entry));
     const alive = pid !== undefined && processAlive(pid);
     const listening = await portListening(entry.port);
-    let url = this.url(entry);
-    if (listening && !this.urls.has(entry.name)) {
-      const recovered = guiUrlFromLogs(this.deckHome, entry);
-      if (recovered !== undefined) {
-        this.urls.set(entry.name, recovered);
-        url = recovered;
-      }
+    // The log is appended by the process itself, so its newest token is never
+    // older than the one captured from stdout. A restart made outside this
+    // window leaves a dead token in the map, which is exactly the 401.
+    const recovered = guiUrlFromLogs(this.deckHome, entry);
+    if (listening && recovered !== undefined && recovered !== this.urls.get(entry.name)) {
+      this.urls.set(entry.name, recovered);
     }
+    const url = this.url(entry);
     return {
       entry,
       managed: this.startedByUs.has(entry.name) && alive,

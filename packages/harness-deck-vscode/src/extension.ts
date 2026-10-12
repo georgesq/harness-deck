@@ -30,7 +30,7 @@ import {
 } from './registry';
 import { HarnessProcesses, type HarnessState } from './processes';
 import { HarnessTree } from './tree';
-import { openHarnessPanel, revealHarnessPanel, updateHarnessPanel } from './panel';
+import { openHarnessPanel, openPanelNames, revealHarnessPanel, updateHarnessPanel } from './panel';
 import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './workspaces';
 
 /** Poll interval of the tree, in milliseconds. */
@@ -88,9 +88,15 @@ async function findHarness(name: string): Promise<HarnessEntry | undefined> {
   return (await listHarnesses()).find((entry) => entry.name === name);
 }
 
-/** Repaint the tree. */
+/** Repaint the tree and re-render the panels whose state changed. */
 async function refresh(): Promise<void> {
   await tree?.refresh();
+  const open = openPanelNames();
+  if (open.length === 0) return;
+  for (const entry of await listHarnesses()) {
+    if (!open.includes(entry.name)) continue;
+    updateHarnessPanel(entry, await runtime().inspect(entry));
+  }
 }
 
 /** Normalize the argument the commands receive: an entry, a node or a name. */

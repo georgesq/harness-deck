@@ -25,7 +25,7 @@ Module._load = function patched(request, parent, isMain) {
   return load.call(this, request, parent, isMain);
 };
 
-const { renderPanelHtml } = require(join(lib, 'panel.js'));
+const { panelSignature, renderPanelHtml } = require(join(lib, 'panel.js'));
 const { loadRegistry, resolveHome, harnessHome, harnessLogPath } = require(join(lib, 'registry.js'));
 const { guiUrlFromLogs } = require(join(lib, 'processes.js'));
 
@@ -74,6 +74,13 @@ if (first !== undefined) {
   check('painel parado explica a porta', stopped.includes(`nao esta respondendo em http://127.0.0.1:${first.port}`));
 
   check('log fica na raiz do deck', harnessLogPath(deckHome, first).startsWith(join(deckHome, '.run')));
+
+  const before = { entry: first, managed: true, listening: true, pid: 1, url: `http://127.0.0.1:${first.port}/?token=um`, tail: '' };
+  check('assinatura igual para o mesmo estado', panelSignature(before) === panelSignature({ ...before }));
+  check(
+    'assinatura muda quando o token muda',
+    panelSignature(before) !== panelSignature({ ...before, url: `http://127.0.0.1:${first.port}/?token=dois` }),
+  );
 }
 
 // A window reload empties the in-memory map while the harness keeps running, so
