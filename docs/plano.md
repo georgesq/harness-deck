@@ -48,8 +48,8 @@ de protocolo": o adapter já faz a parte difícil, o plugin só traduz `session/
 | # | Item | Escopo | Status |
 |---|---|---|---|
 | B.1 | Subir `claude-agent-acp` como subprocesso; handshake ACP (`initialize` → `new_session`) | protocolo padrão, sem UI ainda | ✅ |
-| B.2 | Tradução de ida: `session/update` (texto chegando) → `SessionEvent` do DSH (`assistant/message` + `agent/assistant-stream`, ver [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md)) | só texto, sem ferramenta | 🟡 `assistant/message` feito e verificado; falta `agent/assistant-stream` (ao vivo) |
-| B.3 | Teste manual: pergunta simples no perfil isolado, resposta real do Claude Code no chat da Web GUI, em streaming | fecha o portão do F1 (streaming) | 🟡 turno completo verificado sem GUI e sem crédito (endpoint Anthropic falso local); falta o teste na GUI e o streaming ao vivo |
+| B.2 | Tradução de ida: `session/update` (texto chegando) → `SessionEvent` do DSH (`assistant/message` + `agent/assistant-stream`, ver [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md)) | só texto, sem ferramenta | ✅ texto durável **e** ao vivo, com frames densos verificados em provedor real (OpenRouter) |
+| B.3 | Teste manual: pergunta simples no perfil isolado, resposta real do Claude Code no chat da Web GUI, em streaming | fecha o portão do F1 (streaming) | 🟡 streaming provado fora da GUI (ouvinte global igual ao da GUI); falta abrir a Web GUI do perfil e ver a resposta desenhada |
 | B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ⏳ |
 | B.5 | Retomada de sessão (era 1.5) | depois do B.3 provado | ⏳ |
 

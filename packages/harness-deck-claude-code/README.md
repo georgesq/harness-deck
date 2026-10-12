@@ -17,15 +17,28 @@ Sequência verificada rodando o servidor SDK do DSH (`session/prompt` → notifi
 ```
 turn/start {"turn":1}
 step/start {"turn":1,"step":1}
-assistant/message {"turn":1,"step":1,"message":{... "text":"pong" ...}}
+user/message {"content":[{"type":"text","text":"..."}], ...}
+assistant/message {"turn":1,"step":1,"message":{... "text":"pong" ...}, "stream":[...]}
 step/end {"turn":1,"step":1}
 turn/end {"turn":1,"reason":{"kind":"completed"}}
 ```
 
+**Texto ao vivo (streaming)**: além do `assistant/message` durável, a tentativa publica
+`agent/assistant-stream` — evento de *dispatch*, não de log — com os frames `start` / `chunk` /
+`end` que a Web GUI usa para desenhar o texto enquanto ele chega. Verificado com provedor real
+(OpenRouter): 22 frames densos em `revision` e `index`, 19 deltas de texto ao longo de ~160 ms,
+antes do `assistant/message`. O `assistant/message` carrega o mesmo stream no campo `stream`, então
+recarregar a sessão reconstrói o texto idêntico. Contrato e regras em
+[event-sequence.md](docs/event-sequence.md).
+
+**Turno vazio é falha, não sucesso**: se o `claude-agent-acp` morre no meio do turno, o cliente ACP
+*resolve* o prompt pendente em vez de rejeitar. Sem tratamento isso virava um `assistant/message`
+vazio com `turn/end reason=completed` — resposta em branco com cara de sucesso. Agora o turno fecha
+com `assistant/attempt` (o stream sem mensagem) e `turn/end reason=error`, código
+`EMPTY_RESPONSE` — o mesmo que o motor padrão usa para resposta vazia.
+
 **Ainda não feito**:
 
-- `agent/assistant-stream` (o texto chegando ao vivo) — hoje a mensagem só aparece inteira no
-  `assistant/message` do fim do turno. Sem isso não há "streaming no chat", só resposta completa.
 - **B.4** aprovação de ferramenta e **B.5** retomada de sessão (`resume` ainda lança
   `Error("not implemented yet — item B.5")`, de propósito).
 
