@@ -22,12 +22,29 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 |---|---|---|
 | 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
-| 1.3 | Criar sessão e ver a resposta em streaming no chat | ⏳ |
+| 1.3 | Criar sessão e ver a resposta em streaming no chat — **dividido em 1.3.a–d, ver abaixo** | ⏳ |
 | 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI | ⏳ |
 | 1.5 | Retomar sessão depois de reiniciar | ⏳ |
 
 **Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada.
 Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
+
+### Item 1.3, dividido (achado em 12/10/2026, lendo `dsh-agent-loop/lib/index.js`)
+
+`AgentFactory.createAgent`/`resume` do `dsh-agent-loop` real (quase 2000 linhas) usa classes e
+métodos **privados** do próprio pacote (`SessionPreparation`, `this.prepare`, `ReactLoopAgent`,
+`AssistantStreamAttempt`) — não dá para copiar isso para o plugin do Claude Code; o próprio
+comentário do esqueleto (item 1.2) já avisa para não copiar a lógica interna, só o padrão de
+registro. O caminho certo é a API **pública** do `@deepseek-ai/dsh-session`
+(`ctx.sessions.prepare` + `Session.enter` + `Session.announce`, documentados no próprio pacote) e
+`Session.append(type, data, opts)` para o log de eventos — não as classes privadas do loop padrão.
+
+| # | Item | Status |
+|---|---|---|
+| 1.3.a | Entender e documentar os `SessionEventType` mínimos para uma resposta de texto simples (sem ferramenta): o que o `dsh-agent-loop` emite por turno (`turn/start`, mensagem do usuário, `assistant/attempt`, fechamento) | ⏳ |
+| 1.3.b | `createAgent` real: `ctx.sessions.prepare` → compor o `Agent` próprio → `enter` → `announce`, sem reusar classes privadas do `dsh-agent-loop` | ⏳ |
+| 1.3.c | Ligar o Claude Agent SDK: enviar o turno, consumir o stream do SDK, e append incremental de evento(s) de mensagem do assistente conforme chega | ⏳ |
+| 1.3.d | Teste manual: perfil isolado, uma pergunta simples, resposta aparece no chat da Web GUI em streaming | ⏳ |
 
 ## F2 — Vários harness no VS Code (REQ-01, REQ-02)
 

@@ -10,8 +10,10 @@
 - [x] **Item 1.1** — SDK falando com a Avello. Chave via `.env` do projeto (fora do git). Testado
   com `@anthropic-ai/sdk` já instalado no profile do DSH, modelo `claude-sonnet-5`, resposta ok.
 - [x] **Item 1.2** — Esqueleto do plugin `harness-deck-claude-code`, commit `ace5e67`.
-- [ ] **Item 1.3** — Criar sessão de verdade e ver a resposta em streaming no chat. Ainda não
-  disparado.
+- [ ] **Item 1.3** — Dividido em 1.3.a–d após ler `dsh-agent-loop` real (quase 2000 linhas,
+  classes privadas demais para copiar). Caminho certo é a API pública do `dsh-session`
+  (`ctx.sessions.prepare`/`enter`/`announce` + `Session.append`). Ver `plano.md`. Trabalhando no
+  1.3.a agora.
 - [ ] **REQ-04 (item 3.0)** — Medir plugin/automation task/setting por harness. Ainda não
   disparado.
 
