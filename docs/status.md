@@ -3,7 +3,7 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 15:55 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 16:26 (America/Sao_Paulo)
 
 ## Agora
 
@@ -79,14 +79,20 @@ Implementado:
   lê o mesmo `.env` na ativação, registra no canal de saída **quais** variáveis carregou (nunca os
   valores) e repassa ao `spawn`.
 
-**Verificado:** num deck de teste (`.run/deck-env`, porta 3199) com um `.env` contendo
-`OPENROUTER_API_KEY` entre aspas, `export DEEPSEEK_API_KEY` e uma linha malformada, o `up` subiu o
-harness e o `/proc/<pid>/environ` do filho mostrou as duas variáveis preenchidas e a malformada
-ignorada.
+**Verificado, três níveis:**
+
+1. Deck de teste (`.run/deck-env`, porta 3199) com um `.env` contendo `OPENROUTER_API_KEY` entre
+   aspas, `export DEEPSEEK_API_KEY` e uma linha malformada: o `up` subiu o harness e o
+   `/proc/<pid>/environ` do filho mostrou as duas variáveis preenchidas e a malformada ignorada.
+2. Raiz real: com a chave no `.env`, o `/proc/<pid>/environ` do `claude` traz `OPENROUTER_API_KEY`
+   **e** `ANTHROPIC_AUTH_TOKEN` (a ponte ACP recebe a mesma chave), e `https://openrouter.ai/api/v1/key`
+   responde `HTTP 200` para ela.
+3. **Ponta a ponta, na GUI:** sessão aberta em `harness-deck` na porta 3131, mensagem enviada pelo
+   chat com o modelo `openrouter/anthropic/claude-sonnet-4.5` — **`Completed in 3s`, resposta `ok`**.
+   O caminho chave → rota → modelo está fechado.
 
 **Pendência do dono:** a chave do OpenRouter foi impressa em texto puro no transcript desta sessão;
-deve ser **rotacionada**, e a chave nova colada em `~/.harnessdeck/.env` (o arquivo já está lá, com
-o campo vazio e a explicação).
+deve ser **rotacionada** (a que está no `.env` é a mesma, já validada).
 
 ## Por que implementação própria e não fork (item 2.4)
 
