@@ -1,0 +1,48 @@
+name: Defeito
+description: Algo não funciona como deveria
+labels: [bug]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: O que acontece
+      description: O comportamento observado, com a mensagem de erro completa se houver.
+    validations:
+      required: true
+
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que deveria acontecer
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduzir
+    attributes:
+      label: Como reproduzir
+      description: Comandos, cliques e o que apareceu. Se der, aponte o harness e o modelo em uso.
+      placeholder: |
+        1. node packages/harness-deck-launcher/bin/harness-deck.mjs up claude
+        2. abrir a URL http://127.0.0.1:3131
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: ambiente
+    attributes:
+      label: Ambiente
+      description: Sistema, versão do Node, versão do DSH, extensão VS Code ou navegador.
+      placeholder: Linux, Node v24.19.0, DSH 0.2.0-rc.2, VS Code 1.xx
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Saída do canal "Harness Deck" no VS Code, ou de <raiz>/.run/<harness>/dsh.log.
+      render: text
+    validations:
+      required: false

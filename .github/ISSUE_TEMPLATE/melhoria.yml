@@ -1,0 +1,39 @@
+name: Melhoria ou novo harness
+description: Ideia, pedido de recurso ou suporte a um harness novo
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: O que está faltando
+      description: Descreva a necessidade antes da solução que você imaginou.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Proposta
+      description: Como você faria. Se for um harness novo, diga qual e se ele fala ACP.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: Tipo
+      options:
+        - Recurso na interface
+        - Novo harness
+        - Mudança de arquitetura (precisa de aval antes do código)
+        - Documentação
+        - Outro
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas que já considerou
+    validations:
+      required: false
