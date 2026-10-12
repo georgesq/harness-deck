@@ -61,10 +61,10 @@ ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 | # | Item | Status |
 |---|---|---|
 | 2.0 | **Escolher o harness ao criar o workspace** (pedido do dono em 12/10/2026): hoje o harness é fixado no perfil que se sobe — `agent-loop` desligado, plugin instalado — e workspace no DSH é só uma pasta, sem harness. Ver "Como o harness pode ser escolhido" abaixo | ✅ **decidido pelo dono em 12/10/2026: caminho A agora, caminho B depois** — começa em 2.1 |
-| 2.1 | Registro de harness: um perfil por harness em `~/.harnessdeck`, cada um com porta própria | ⏳ |
-| 2.2 | Verificar se a lista de workspaces fica separada por perfil ou se precisa de `DSH_HOME` por harness | ⏳ |
-| 2.3 | Lançador: sobe e para os processos de todos os harness registrados | ⏳ |
-| 2.4 | Extensão própria do VS Code (fork da Vithrive, MIT): um painel por harness | ⏳ |
+| 2.1 | Registro de harness: um perfil por harness em `~/.harnessdeck`, cada um com porta própria | ✅ pacote `harness-deck-launcher` (registro JSON + materialização do perfil + comandos `list`/`add`/`rm`/`up`/`down`/`status`/`logs`), verificado com dois harness rodando juntos |
+| 2.2 | Verificar se a lista de workspaces fica separada por perfil ou se precisa de `DSH_HOME` por harness | ✅ **é o `DSH_HOME`, não o perfil** — dois perfis no mesmo `DSH_HOME` dividem `storages/workspace.json` e o log de sessões. Adotado um `DSH_HOME` por harness (`<raiz>/homes/<nome>`) |
+| 2.3 | Lançador: sobe e para os processos de todos os harness registrados | ✅ `harness-deck up` / `down`, processo destacado com pid e log por harness; `up` espera a porta responder |
+| 2.4 | Extensão própria do VS Code (fork da Vithrive, MIT): um painel por harness | ⏳ veredito da investigação em [status.md](status.md): a extensão instalada é singleton, **não há caminho sem fork**; falta o dono escolher quando entra |
 | 2.5 | Teste lado a lado: DSH e Claude Code abertos juntos, cada um com seus projetos | ⏳ |
 
 **Portão F2:** dois harness na mesma janela, sem misturar workspaces, e o DSH da 3080 intacto.

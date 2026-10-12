@@ -3,9 +3,25 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 14:45 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 15:05 (America/Sao_Paulo)
 
 ## Agora
+
+- [x] **Item 2.1 — completo: registro de harnesses + lançador (`harness-deck`).** Pacote novo
+  [packages/harness-deck-launcher](../packages/harness-deck-launcher/) com registro em JSON
+  (`<raiz>/harnesses.json`), materialização do perfil do DSH e ciclo de vida do processo. Comandos:
+  `list`, `add`, `rm`, `up`, `down`, `status`, `logs`. **Verificado rodando** com dois harnesses
+  simultâneos — `alfa` (motor `dsh`, porta 3121) e `bravo` (motor `claude-code` + ponte ACP, porta
+  3122): os dois subiram, responderam HTTP na porta (401 sem token, como esperado), apareceram como
+  `no ar` no `list` e pararam com SIGTERM no `down`. `tsc --noEmit` limpo.
+- [x] **Item 2.2 — completo, e mudou o desenho.** O que separa **workspaces e sessões é o
+  `DSH_HOME`, não o perfil**: dois perfis dentro do mesmo `DSH_HOME` compartilham a mesma
+  `storages/workspace.json` e o mesmo log de sessões (`resolveDshHome()` não olha o perfil;
+  `dsh-home-paths/lib/index.js:82`). Medido: os perfis `web`, `hd-web` e `acp-smoke-sdk` dividiam um
+  único `workspace.json` e 65 arquivos de projeção de sessão. Consequência adotada: **um `DSH_HOME`
+  por harness** (`<raiz>/homes/<nome>`), com o perfil servindo só para isolar motor e plugins. O
+  teste acima confirmou o isolamento: cada harness escreveu o **seu** `storages/workspace.json`, os
+  dois vazios e independentes.
 
 - [x] **Item 1.1** — SDK falando com a Avello. Chave via `.env` do projeto (fora do git). Testado
   com `@anthropic-ai/sdk` já instalado no profile do DSH, modelo `claude-sonnet-5`, resposta ok.
@@ -101,6 +117,28 @@ Sete erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles 
    qualquer, o primeiro prompt é recusado. O rótulo que chega à tela não nomeia o serviço nem a
    causa. Lição: **escopo de agente no DSH não é só "ter escopo" — é ter o agente como chave.**
 
+## Como o lançador monta um harness (item 2.1)
+
+- **Registro** em `<raiz>/harnesses.json` (JSON, não YAML: evita dependência de parser). Campos por
+  harness: `name`, `profile`, `home` (o `DSH_HOME`), `port`, `engine` (`dsh` | `claude-code`),
+  `provider` (`kind`/`model`/`apiKeyEnv`), `enabled`, `note`. A raiz é `$HARNESS_DECK_HOME` ou
+  `~/.harnessdeck`.
+- **Perfil materializado, nunca escrito à mão.** `add` gera `package.json`, `cordis.patch.yml` e
+  `pnpm-workspace.yaml` do perfil. Para o motor `claude-code` o patch desabilita o `agent-loop` e
+  insere a ponte ACP — **um `AgentFactory` por processo do DSH** é regra do DSH
+  (`AgentRegistry.setFactory` recusa o segundo) — e registra a rota do provedor
+  (`agent-default-model` + `llm-pi-ai`), sem a qual o DSH não sobe seletor de modelo. Para o motor
+  `dsh` o patch é vazio.
+- **Chave de API nunca vai para arquivo.** O registro guarda só o **nome** da variável
+  (`OPENROUTER_API_KEY`); o valor vem do ambiente de quem roda `up`. O `.env.example` do perfil lista
+  os nomes.
+- **A ponte ACP fala o formato Anthropic**, então provedor não-Anthropic chega ao subprocesso por
+  `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` (derivados do provedor do harness), enquanto o lado
+  DSH do mesmo processo lê a variável do próprio provedor.
+- **Ciclo de vida:** processo destacado, `DSH_HOME=<raiz>/homes/<nome>`, pid em
+  `<raiz>/.run/<nome>/dsh.pid`, log em `<raiz>/.run/<nome>/dsh.log`, `up` espera a porta responder,
+  `down` manda SIGTERM e só então SIGKILL.
+
 ## Subagentes em segundo plano
 
 _Nenhum em execução._ O endpoint Anthropic falso local (`.run-fake-anthropic.mjs`) já cumpriu o
@@ -133,14 +171,27 @@ gancho de pausa (`FAKE_HOLD_MS`) para o teste de abandono descrito acima.
 - **Pendência de ambiente (não do produto):** o script de teste usa um `DSH_HOME` dentro do
   repositório (`.run/dsh-home`, fora do git) porque o sandbox não deixa escrever em
   `~/.harnessdeck`.
+- **O sandbox mata processo destacado.** Cada comando do sandbox roda com `bwrap --die-with-parent`,
+  então um harness que o `up` sobe **morre quando o comando que o subiu termina**. O ciclo completo
+  (`up` → portas no ar → `down`) foi verificado dentro de **um único comando**; numa máquina sem esse
+  sandbox o processo destacado sobrevive normalmente. Não é defeito do lançador.
 
 **Resolvidos desde a última atualização** (as duas afirmações antigas estavam erradas): `tsc` **roda**
 e passa limpo, e o `claude-agent-acp` **está instalado** (`0.89.1`) como dependência do plugin.
 
 ## Próxima decisão do dono
 
-- Nenhuma travando. O teste com provedor real passou pelo OpenRouter; a Avello pode ficar como está
-  (a conta sem crédito não bloqueia mais nada).
+- **Aval pedido: raiz de dados em `~/.harnessdeck`.** O lançador está pronto para rodar contra a raiz
+  real, mas o sandbox da sessão bloqueia escrita fora do repositório. Para o dono usar de verdade
+  (`harness-deck add … && harness-deck up`) é preciso liberar a escrita em `~/.harnessdeck` — ou rodar
+  o comando fora do sandbox.
+- **Aval pedido: a extensão do VS Code (item 2.4).** Veredito da investigação: a extensão instalada
+  (`vithrive.deepseek-harness-vscode` 1.0.0) é um **singleton de 4186 linhas** — uma `activeView`,
+  um `managedChild`, um proxy de auth, `VIEW_ID` fixo. N harnesses exigem N views declaradas, e
+  container não se registra em tempo de execução: **não há caminho sem fork**. O menor fork são 6
+  itens concretos (manifest com `dshPanel.harnesses[]`, estado por harness, proxy por URL, processo
+  por porta, comandos por view, provedor de LM adiado), partindo da 1.0.0 instalada e não da tag
+  0.8.33 do GitHub. Falta o dono escolher **quando** isso entra.
 - **Em aberto, de produto:** hoje o teste é um servidor lançado à mão (`dsh hd-web --port 3099`). O
   alvo é uma extensão do VS Code que sobe o perfil isolado sozinha e mostra um painel por harness
-  (REQ-01, REQ-02, REQ-04). Falta o dono escolher quando isso entra.
+  (REQ-01, REQ-02, REQ-04).
