@@ -20,7 +20,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 
 | # | Item | Status |
 |---|---|---|
-| 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ⛔ chave não chega ao shell do agente |
+| 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
 | 1.3 | Criar sessão e ver a resposta em streaming no chat | ⏳ |
 | 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI | ⏳ |
@@ -74,6 +74,6 @@ Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 
 ## Bloqueios abertos
 
-- **1.1:** `AVELLO_API_KEY` existe no WSL, mas não chega ao shell do agente (o processo do DSH
-  não herda a variável). Contorno sugerido: exportar no `~/.bashrc` ou `~/.profile` e reiniciar o
-  `dsh web`, ou rodar o teste da Avello você mesmo no terminal.
+- **1.1 resolvido:** chave via `.env` do projeto (fora do git), carregada com `set -a; source .env`.
+  Pendência real: o `dsh web` da porta 3080 pode ter o mesmo problema de não herdar `~/.bashrc`;
+  não verificado ainda.
