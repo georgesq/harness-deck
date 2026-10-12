@@ -37,6 +37,26 @@ vazio com `turn/end reason=completed` — resposta em branco com cara de sucesso
 com `assistant/attempt` (o stream sem mensagem) e `turn/end reason=error`, código
 `EMPTY_RESPONSE` — o mesmo que o motor padrão usa para resposta vazia.
 
+**Escopo do agente (o que a Web GUI exigiu)**: o `ClaudeCodeAgent` minta o **próprio escopo**
+(`@deepseek-ai/dsh-scope`'s `createScope`) dentro do construtor, com **ele mesmo como chave**, sob o
+contexto do plugin, dentro de um `ownerCtx.effect(...)` que amarra a vida do escopo à do dono —
+mesma ordem do `dsh-agent-loop` (`lib/index.js:778` e `:1714`). Duas armadilhas, as duas só
+aparecem com sessão de verdade na GUI:
+
+- `ownerCtx.extend()` copia a cadeia de contexto mas **não** a marca de escopo; sem marca o
+  `agent-preset-registry` recusa ligar o preset (`dsh-agent-preset-registry/lib/index.js:663`,
+  `Agent preset binding requires a scoped context`) e a **criação** da sessão falha.
+- A chave do escopo tem de ser o próprio agente: o upload de arquivo confere
+  `scopeOf(agent.ctx) === agent` (`dsh-client-file-upload/lib/index.js:297`) e, com chave
+  arbitrária, o **primeiro prompt** é recusado com um rótulo que não nomeia a causa
+  (`prompt rejected (session/agent-busy)`).
+
+Verificado também na Web GUI do perfil isolado, com **navegador sem cabeça** (Playwright) dirigindo
+a página de verdade em 12/10/2026: o chat foi criado, o prompt aceito e a resposta apareceu
+**crescendo na tela** — numa pergunta "números de 1 a 30 separados por vírgula", o DOM mostrava 5
+números aos 9,2 s, 10 aos 9,6 s, 13 aos 10,0 s, 26 aos 10,4 s e 30 aos 10,8 s (amostras de 400 ms),
+com `turn/end reason=completed`.
+
 **Ainda não feito**:
 
 - **B.4** aprovação de ferramenta e **B.5** retomada de sessão (`resume` ainda lança
@@ -73,13 +93,13 @@ docs/event-sequence.md
 
 ## Dependências e por que peer + dev
 
-`@deepseek-ai/cordis`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-session` e
-`@deepseek-ai/dsh-llm` estão declaradas como **peerDependencies** (mesmas versões da instalação do
-DSH: `cordis@~4.0.4` e `0.2.0-rc.2`). Isso é intencional: este plugin roda **dentro** do processo do
-DSH, que já traz a própria cópia dessas bibliotecas; **trazer uma cópia própria quebra o plugin** —
-foi um defeito real observado em 12/10/2026, com o sintoma `cannot get property "sessions" without
-inject` ao criar a sessão, porque o registro de serviço do `cordis` não enxergava a classe vinda de
-outra instância da biblioteca.
+`@deepseek-ai/cordis`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-session`,
+`@deepseek-ai/dsh-llm` e `@deepseek-ai/dsh-scope` estão declaradas como **peerDependencies** (mesmas
+versões da instalação do DSH: `cordis@~4.0.4` e `0.2.0-rc.2`). Isso é intencional: este plugin roda
+**dentro** do processo do DSH, que já traz a própria cópia dessas bibliotecas; **trazer uma cópia
+própria quebra o plugin** — foi um defeito real observado em 12/10/2026, com o sintoma `cannot get
+property "sessions" without inject` ao criar a sessão, porque o registro de serviço do `cordis` não
+enxergava a classe vinda de outra instância da biblioteca.
 
 As mesmas entradas aparecem em **devDependencies** só para o ambiente de desenvolvimento ter os
 tipos ao compilar. Nesse ambiente, os pacotes `@deepseek-ai/*` de
