@@ -23,9 +23,12 @@ _Nenhum em execução._
 
 - **Verificação do 1.2 incompleta:** `tsc` não pôde ser executado neste ambiente (sem TypeScript
   instalado, sem rede para `npx` buscar). Revisão foi só leitura manual do código.
-- **Não verificado:** se o `dsh web` real da porta 3080 tem o mesmo problema de não herdar
-  `AVELLO_API_KEY` do `~/.bashrc` (resolvido aqui com `.env` do projeto, que não vale para aquele
-  processo).
+- **Esclarecido (lendo `dsh-llm-pi-ai/lib/index.js:2563`):** a chave não é "env vence se os dois
+  existirem". A ordem real é: 1) serviço de credenciais do DSH (o que a tela **Models** da própria
+  Web GUI grava) — se existir, **sempre** vence; 2) só na ausência desse serviço, cai para o
+  ambiente de lançamento do processo (`launchEnvironmentOf`, o que o `dsh web` herdou ao subir).
+  Ou seja: se a Avello já foi configurada pela tela Models, o `~/.bashrc` não importa. **Não
+  verificado ainda:** se o perfil `web` da porta 3080 tem a Avello guardada assim ou só por env.
 
 ## Próxima decisão do dono
 
