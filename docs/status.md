@@ -184,9 +184,9 @@ F2 (o alvo é DSH + Claude Code), mas fecha a porta para "dois DSH lado a lado" 
   teste acima confirmou o isolamento: cada harness escreveu o **seu** `storages/workspace.json`, os
   dois vazios e independentes.
 
-- [x] **Item 1.1** — SDK falando com a Avello. Chave via `.env` do projeto (fora do git). Testado
+- [x] **Item 1.1** — SDK falando com uma rota Anthropic-shaped. Chave via `.env` do projeto (fora do git). Testado
   com `@anthropic-ai/sdk` já instalado no profile do DSH, modelo `claude-sonnet-5`, resposta ok.
-  **Atenção:** a conta Avello está sem crédito agora (ver Bloqueios).
+  **Atenção:** aquela conta ficou sem crédito (ver Bloqueios); a rota viva hoje é o OpenRouter.
 - [x] **Item 1.2** — Esqueleto do plugin `harness-deck-claude-code`, commit `ace5e67`.
 - [x] **Item 1.3.a** — Sequência real de eventos documentada em
   [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md).
@@ -315,9 +315,9 @@ gancho de pausa (`FAKE_HOLD_MS`) para o teste de abandono descrito acima.
   teste), mas **a lista de workspaces dos harnesses reais ainda não foi preenchida por mim**. Ou o
   dono roda o comando (uma linha, na seção "Próxima decisão do dono"), ou me libera acesso total na
   próxima sessão.
-- **Conta Avello sem crédito — deixou de importar.** `POST
-  https://avello.online/v1/messages` com a chave do `.env` responde `HTTP 429`:
-  `{"error":{"message":"Avello credit limit exceeded. Try again later.","type":"rate_limit_error","code":"AVELLO_CREDIT_LIMIT_EXCEEDED"}}`.
+- **A rota Anthropic anterior ficou sem crédito — deixou de importar.** `POST
+  <endpoint Anthropic-shaped>/v1/messages` com a chave do `.env` responde `HTTP 429` com o erro de
+  limite de crédito do provedor (`type: rate_limit_error`, `code: ..._CREDIT_LIMIT_EXCEEDED`).
   Sintoma no bridge: a chamada de modelo nunca responde, então a ponte fica parada depois de
   `step/start`. **Não é defeito da ponte**: um teste direto no `claude-agent-acp`, sem DSH nenhum,
   para no mesmo ponto. O turno completo foi provado com um endpoint Anthropic falso local, então
@@ -365,7 +365,7 @@ e compila.
   confirmar que a GUI abre **dentro da aba** e que o item 2.5 (DSH + Claude Code lado a lado, cada um
   com seus projetos) fecha o portão do F2.
 - **Chave do OpenRouter no ambiente.** O harness `claude` está registrado com
-  `OPENROUTER_API_KEY` e o `.env` do projeto só tem `AVELLO_API_KEY`, então o processo sobe e o modelo
+  `OPENROUTER_API_KEY`; quando o `.env` do projeto não trazia essa variável, o processo subia e o
   falha. É só exportar a variável (nada vai para arquivo).
 - **Decisão de produto que o mapa revelou:** N harnesses **distintos** convivem na mesma janela, mas N
   instâncias **do mesmo front-end DSH** não — o próprio readme da extensão de referência registra que

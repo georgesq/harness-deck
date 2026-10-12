@@ -65,7 +65,7 @@ Verificado lendo o código instalado (DSH `0.2.0-rc.2`, `/usr/local/lib/node_mod
 
 | Opção | O que é | Esforço (estimativa) |
 |---|---|---|
-| A. Modelo Claude no motor do DSH | Já funciona hoje (Avello, formato Anthropic). Mas o harness continua sendo o DSH | zero |
+| A. Modelo Claude no motor do DSH | Já funciona hoje (rota Anthropic-shaped). Mas o harness continua sendo o DSH | zero |
 | **B. Plugin `AgentFactory` com Claude Agent SDK** | Plugin cria/retoma agente via [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/typescript-v2-preview); traduz eventos do SDK para eventos de sessão do DSH e aprovação do SDK para aprovação do DSH | 1–2 semanas |
 | C. Ponte ACP | Plugin que faz o DSH ser cliente de qualquer agente ACP: Claude Code via [claude-code-acp](https://github.com/zed-industries/claude-code-acp), Codex, Gemini | 2–3 semanas; vale para vários harness |
 
@@ -111,8 +111,8 @@ harness sem um plugin por harness).
 - **Sessão em dois lugares:** o Claude Code grava em `~/.claude/projects`; o DSH exige o log dele.
   O plugin precisa espelhar.
 - **API interna instável:** DSH pré-lançamento; pode mudar a cada versão.
-- **Avello no Agent SDK:** falta testar o SDK com `ANTHROPIC_BASE_URL=https://avello.online` e
-  `ANTHROPIC_API_KEY` vindo de `AVELLO_API_KEY`.
+- **Rota Anthropic no Agent SDK:** falta testar o SDK com `ANTHROPIC_BASE_URL` apontando para um
+  endpoint Anthropic-shaped e `ANTHROPIC_API_KEY` vindo do ambiente.
 - **Termos da Anthropic:** app de terceiro com o Agent SDK usa chave de API, não login de assinatura
   Pro/Max (leitura dos termos, não conferido o texto em 12/10/2026).
 - **Paperclip:** não verificado se o `claude_local` repassa `ANTHROPIC_BASE_URL`; bug aberto de
@@ -132,5 +132,5 @@ harness sem um plugin por harness).
 1. Confirmar se dá para escolher o `AgentFactory` por perfil do DSH.
 2. Plugin mínimo da opção B: uma sessão do Claude Code aparecendo no chat do DSH, com streaming e
    aprovação de ferramenta.
-3. Testar o Agent SDK com a Avello.
+3. Testar o Agent SDK com uma rota Anthropic-shaped.
 4. Se os três passarem, planejar a opção B completa e depois a C e o plugin do Paperclip.

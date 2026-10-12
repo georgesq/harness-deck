@@ -20,7 +20,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 
 | # | Item | Status |
 |---|---|---|
-| 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
+| 1.1 | Agent SDK falando com uma rota Anthropic-shaped (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
 | 1.3 | Criar sessão e ver a resposta em streaming no chat — **substituído pela ponte ACP (B.1–B.5), ver abaixo** | ✅ resolvido por B.3 |
 | 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ⏳ |
