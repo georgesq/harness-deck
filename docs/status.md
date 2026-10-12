@@ -14,8 +14,7 @@
   [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md): `turn/start` →
   `step/start` → `user/message` → stream (`agent/assistant-stream`, não é `SessionEvent`) →
   `assistant/message` → `step/end` → `turn/end`.
-- [ ] **Item 1.3.b** — `createAgent` real via API pública (`ctx.sessions.prepare`/`enter`/
-  `announce`), sem reusar classes privadas do `dsh-agent-loop`. Próximo.
+- [ ] **Item 1.3.b** — pausado para decisão do dono (ver "Próxima decisão do dono" abaixo).
 - [ ] **REQ-04 (item 3.0)** — Medir plugin/automation task/setting por harness. Ainda não
   disparado.
 
@@ -36,4 +35,15 @@ _Nenhum em execução._
 
 ## Próxima decisão do dono
 
-- Nenhuma pendente agora.
+- **Achado real ao investigar 1.3.b (lendo `dsh-agent/lib/types/runtime-types.d.ts`):** o `Agent`
+  público não é `{ id }` simples — tem `inbox`, `status`, `cancel`, `whenIdle`, `runMaintenance`,
+  `send`, `followup`, `steer`, `inject`, e um contrato de eventos inteiro (`agent/created`,
+  `agent/status`, `agent/pre-step`, `agent/request`, `agent/assistant-stream`,
+  `agent/turn-stopping`, `agent/error`) que o resto do DSH (chat, aprovação, painel de subagentes)
+  espera. Implementar isso de verdade é escrever uma segunda versão do que o `dsh-agent-loop` já
+  faz em ~2000 linhas, só troca o SDK por dentro — não é "esqueleto + um turno simples", é um
+  motor completo. Pedido ao dono: decidir se seguimos mesmo assim (semanas, não dias), se tentamos
+  um corte menor que não serve ainda para a UI real (ex.: só confirmar que dá pra criar
+  sessão/agente sem crashar, sem turno), ou se reavaliamos a opção C (ponte ACP via
+  `claude-code-acp`, que já existe pronta) antes de continuar — o próprio portão do F1 já previa
+  essa reavaliação se o B se mostrasse caro demais.
