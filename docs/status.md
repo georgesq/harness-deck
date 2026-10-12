@@ -25,6 +25,11 @@
   rodando**: `turn/start → step/start → user/message → session/title → assistant/message ("pong")
   → step/end → turn/end (completed)`, em 2,6 s, sem GUI e sem crédito, com um endpoint Anthropic
   falso local. Falta só o `agent/assistant-stream` (texto ao vivo) — ver Bloqueios.
+- [x] **Turno real por provedor de verdade (OpenRouter).** Mesmo teste, sem endpoint falso:
+  `ANTHROPIC_BASE_URL=https://openrouter.ai/api`, modelo `deepseek/deepseek-v4.1-flash`,
+  `ANTHROPIC_AUTH_TOKEN` vindo do ambiente. Sequência completa em **2,8 s** (o `assistant/message`
+  em 2,0 s), mesmo resultado do endpoint falso. Ou seja: o harness funciona com o Claude Code de
+  verdade; o que estava fora era a conta Avello, não a ponte.
 - [ ] **Item B.3** — teste na Web GUI do perfil isolado. O turno completo já está provado sem GUI;
   falta abrir a GUI e ver a resposta desenhada no chat.
 
@@ -59,14 +64,23 @@ papel: foi com ele que o turno do B.2 fechou sem depender de crédito.
 
 ## Bloqueios
 
-- **Conta Avello sem crédito — bloqueia só o teste com provedor real.** `POST
+- **Conta Avello sem crédito — deixou de importar.** `POST
   https://avello.online/v1/messages` com a chave do `.env` responde `HTTP 429`:
   `{"error":{"message":"Avello credit limit exceeded. Try again later.","type":"rate_limit_error","code":"AVELLO_CREDIT_LIMIT_EXCEEDED"}}`.
   Sintoma no bridge: a chamada de modelo nunca responde, então a ponte fica parada depois de
   `step/start`. **Não é defeito da ponte**: um teste direto no `claude-agent-acp`, sem DSH nenhum,
   para no mesmo ponto. O turno completo foi provado com um endpoint Anthropic falso local, então
-  isso **não** trava mais o desenvolvimento — trava só a prova com o Claude Code de verdade.
-  Depende do dono (crédito na Avello ou outra chave/endpoint compatível).
+  isso **não** trava mais nada: o turno real já foi provado pelo OpenRouter (ver acima).
+- **Chave OpenRouter do cofre do DSH está morta.** `~/.dsh/.credentials.yaml` guarda um
+  `OPENROUTER_API_KEY` que o próprio `GET https://openrouter.ai/api/v1/key` recusa com
+  `401 User not found`. A chave viva está em `~/.claude/settings-or.json` (o "or" é OpenRouter) e
+  responde `200`. A Web GUI da porta 3080 continua funcionando, então ela não está usando a chave do
+  cofre — está pegando do ambiente de lançamento. **Vale limpar/atualizar o cofre** (mexer em
+  `~/.dsh/` pede aval do dono).
+- **Ponto de desenho para o F2:** a ponte repassa `process.env` inteiro para o subprocesso ACP.
+  Num painel com vários harness lado a lado, cada harness precisa do **seu** provedor e da sua
+  credencial, não do ambiente do processo do painel. Isso entra junto com a configuração por
+  harness (REQ-04).
 - **`agent/assistant-stream` ainda não é emitido.** Hoje a ponte só grava a mensagem final
   (`assistant/message`). O critério "streaming" do B.3 exige o evento ao vivo; está anotado em
   [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md).
@@ -79,6 +93,5 @@ e passa limpo, e o `claude-agent-acp` **está instalado** (`0.89.1`) como depend
 
 ## Próxima decisão do dono
 
-- Como destravar o modelo para o teste com o Claude Code de verdade: colocar crédito na Avello, ou
-  indicar outra chave / endpoint Anthropic-compatível. **Não trava mais o desenvolvimento** — o
-  turno completo já foi provado com o endpoint falso local.
+- Nenhuma pendente. O teste com provedor real passou pelo OpenRouter; a Avello pode ficar como
+  está (a conta sem crédito não bloqueia mais nada).
