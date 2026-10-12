@@ -31,6 +31,7 @@ import {
 import { HarnessProcesses, type HarnessState } from './processes';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, revealHarnessPanel, updateHarnessPanel } from './panel';
+import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './workspaces';
 
 /** Poll interval of the tree, in milliseconds. */
 const POLL_MS = 5000;
@@ -169,6 +170,84 @@ async function showLog(entry: HarnessEntry): Promise<void> {
   }
 }
 
+/**
+ * Register a folder as a workspace of one or more harnesses.
+ *
+ * A running harness keeps the workspace list in memory and writes the whole
+ * document back, so a write now would be lost on the next change made in its
+ * GUI: the user is offered to stop it first instead of getting a silent no-op.
+ */
+async function addWorkspaces(entries: HarnessEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const picked = await window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    openLabel: 'Adicionar como workspace',
+    title: entries.length === 1 ? `Workspace de ${entries[0]?.name ?? ''}` : 'Workspace em todos os harnesses',
+  });
+  const folder = picked?.[0]?.fsPath;
+  if (folder === undefined) return;
+
+  // `managed` is a process this window started; `listening` covers a harness
+  // started from a terminal, which holds the list in memory just the same.
+  const running: HarnessEntry[] = [];
+  for (const entry of entries) {
+    const state = await runtime().inspect(entry);
+    if (state.managed || state.listening) running.push(entry);
+  }
+  if (running.length > 0) {
+    const choice = await window.showWarningMessage(
+      `${running.map((entry) => entry.name).join(', ')} está(ão) no ar e a lista de workspaces vive ` +
+        'em memória — sem parar, o workspace some na próxima mudança feita na GUI.',
+      'Parar, adicionar e subir',
+      'Cancelar',
+    );
+    if (choice !== 'Parar, adicionar e subir') return;
+    for (const entry of running) await stopHarness(entry);
+  }
+
+  const added: string[] = [];
+  const skipped: string[] = [];
+  await window.withProgress(
+    { location: ProgressLocation.Notification, title: 'Harness Deck: registrando workspace…' },
+    async () => {
+      for (const entry of entries) {
+        const result = await addWorkspace(deckHome(), entry, folder);
+        (result.existing ? skipped : added).push(entry.name);
+      }
+    },
+  );
+
+  for (const entry of running) await startHarness(entry, true);
+  const parts = [`${folder} → ${added.join(', ')}`];
+  if (skipped.length > 0) parts.push(`já estava em ${skipped.join(', ')}`);
+  await window.showInformationMessage(`Workspace registrado: ${parts.join('; ')}`);
+  output?.appendLine(`workspace ${parts.join(' | ')}`);
+}
+
+/** Unregister a folder from one harness, picking from what it already lists. */
+async function removeWorkspaces(entries: HarnessEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const folders: { label: string; detail: string; entry: HarnessEntry }[] = [];
+  for (const entry of entries) {
+    for (const path of await listPaths(deckHome(), entry)) {
+      folders.push({ label: path, detail: entry.name, entry });
+    }
+  }
+  if (folders.length === 0) {
+    await window.showInformationMessage('Nenhum workspace registrado nos harnesses.');
+    return;
+  }
+  const picked = await window.showQuickPick(folders, { placeHolder: 'Workspace a remover', canPickMany: false });
+  if (picked === undefined) return;
+  const result = await removeWorkspace(deckHome(), picked.entry, picked.label);
+  await window.showInformationMessage(
+    result.removed ? `Removido de ${picked.entry.name}: ${result.path}` : `${result.path} não estava em ${picked.entry.name}`,
+  );
+  await refresh();
+}
+
 /** Register the commands, each resolving its harness from the argument. */
 function registerCommands(context: ExtensionContext): void {
   const register = (id: string, handler: (argument: unknown) => Promise<void>): void => {
@@ -207,6 +286,18 @@ function registerCommands(context: ExtensionContext): void {
   register('harnessDeck.showLog', async (argument) => {
     const entry = await resolveEntry(argument);
     if (entry !== undefined) await showLog(entry);
+  });
+  register('harnessDeck.addWorkspace', async (argument) => {
+    const entry = await resolveEntry(argument);
+    if (entry !== undefined) await addWorkspaces([entry]);
+  });
+  register('harnessDeck.addWorkspaceEverywhere', async () => {
+    await addWorkspaces(await listHarnesses());
+  });
+  register('harnessDeck.removeWorkspace', async (argument) => {
+    await removeWorkspaces(argument === undefined ? await listHarnesses() : [await resolveEntry(argument)].filter(
+      (entry): entry is HarnessEntry => entry !== undefined,
+    ));
   });
 }
 

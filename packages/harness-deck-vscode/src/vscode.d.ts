@@ -140,6 +140,18 @@ declare module 'vscode' {
       items: readonly string[] | Thenable<readonly string[]>,
       options?: { placeHolder?: string },
     ): Thenable<string | undefined>;
+    showQuickPick<T extends { label: string }>(
+      items: readonly T[] | Thenable<readonly T[]>,
+      options?: { placeHolder?: string; canPickMany?: boolean },
+    ): Thenable<T | undefined>;
+    showOpenDialog(options: {
+      canSelectFolders?: boolean;
+      canSelectFiles?: boolean;
+      canSelectMany?: boolean;
+      openLabel?: string;
+      title?: string;
+      defaultUri?: Uri;
+    }): Thenable<readonly Uri[] | undefined>;
     withProgress<T>(
       options: { location: number; title?: string; cancellable?: boolean },
       task: (progress: { report(value: { message?: string }): void }) => Thenable<T>,
