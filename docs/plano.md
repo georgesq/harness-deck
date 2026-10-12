@@ -60,6 +60,7 @@ ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 
 | # | Item | Status |
 |---|---|---|
+| 2.0 | **Escolher o harness ao criar o workspace** (pedido do dono em 12/10/2026): hoje o harness é fixado no perfil que se sobe — `agent-loop` desligado, plugin instalado — e workspace no DSH é só uma pasta, sem harness. Ver "Como o harness pode ser escolhido" abaixo | ⏳ decisão de arquitetura pendente |
 | 2.1 | Registro de harness: um perfil por harness em `~/.harnessdeck`, cada um com porta própria | ⏳ |
 | 2.2 | Verificar se a lista de workspaces fica separada por perfil ou se precisa de `DSH_HOME` por harness | ⏳ |
 | 2.3 | Lançador: sobe e para os processos de todos os harness registrados | ⏳ |
@@ -67,6 +68,25 @@ ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 | 2.5 | Teste lado a lado: DSH e Claude Code abertos juntos, cada um com seus projetos | ⏳ |
 
 **Portão F2:** dois harness na mesma janela, sem misturar workspaces, e o DSH da 3080 intacto.
+
+### Como o harness pode ser escolhido (verificado no código em 12/10/2026)
+
+Restrição real: o DSH aceita **uma fábrica de agente por processo** — `setFactory` lança
+`an agent factory is already registered` (`dsh-agent/lib/index.js:429`). O harness, portanto, é
+propriedade do **processo**, não do workspace.
+
+Encaixe que já existe para escolher por **sessão**: a criação de sessão carrega
+`meta.agentPreset` até a fábrica (`dsh-agent/lib/types/index.d.ts:70`) e o serviço `agentPresets`
+monta os plugins **por agente** (`presets.mount(agentCtx, id)`,
+`dsh-api-session-controller/lib/index.js:359-368`). O seletor de preset que já aparece no cabeçalho
+da GUI ("Standard mode") é esse campo.
+
+| Caminho | Como fica | Custo |
+|---|---|---|
+| **A. Um processo por harness** | O deck sobe N perfis/portas, cada um com o seu harness; "novo workspace → harness → pasta" vive na nossa UI e roteia para o processo certo | N processos; a GUI de cada harness só enxerga os workspaces dele |
+| **B. Uma fábrica roteadora** | Um processo só; a fábrica lê `meta.agentPreset` e constrói ponte ACP ou motor padrão (o `dsh-agent-loop` **exporta** `AgentLoop`, confirmado por `import()`), e o harness aparece no seletor de preset nativo | isolamento por harness vira regra nossa, não do processo; mais acoplamento à API interna |
+
+Não são exclusivos: A dá o isolamento duro e depois B pode juntar tudo numa janela.
 
 ## F3 — Claude Code completo
 
