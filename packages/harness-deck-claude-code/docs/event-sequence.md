@@ -40,6 +40,29 @@ item 1.5).
   `step/start`, `step/end`, `turn/end` não são eventos de superfície e não aceitam `opts`
   (ver `dsh-session/lib/types/index.d.ts:217-246`).
 
+## Verificado rodando (12/10/2026)
+
+O caminho real confirma a sequência acima. Ordem observada nas notificações `session.event` do
+servidor SDK do DSH:
+
+```
+turn/start -> step/start -> user/message -> session/title -> assistant/message -> step/end
+  -> turn/end(reason=completed)
+```
+
+Duas observações que só apareceram rodando:
+
+- **`user/message` não vinha de ninguém.** O motor padrão anexa a mensagem do usuário quando
+  consome a caixa de entrada (`dsh-agent-loop/lib/index.js:1061`); trocando o motor, ninguém mais
+  fazia isso — a primeira execução real mostrou o `assistant/message` sem a pergunta acima dele. O
+  bridge passou a anexar. Fica como lembrete: **todo evento de superfície que o motor padrão anexa
+  precisa ser reanexado por quem o substitui.**
+- **`session/title` aparece sozinho**, gerado pelo DSH a partir da primeira mensagem
+  (`source: fallback`), sem o bridge fazer nada.
+
+Medição: 2,6 s do prompt ao `turn/end` com um endpoint Anthropic falso local respondendo "pong"
+(1,5 s até o `assistant/message`).
+
 ## Não verificado ainda
 
 - Como `agent/assistant-stream` chega exatamente ao componente de chat da Web GUI (não li o

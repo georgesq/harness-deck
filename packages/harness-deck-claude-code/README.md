@@ -5,12 +5,29 @@ Plugin [cordis](https://www.npmjs.com/package/@deepseek-ai/cordis) que registra 
 motor de agente (`AgentFactory`) do [DSH](https://www.npmjs.com/package/@deepseek-ai/dsh), no lugar
 do motor padrão `@deepseek-ai/dsh-agent-loop`.
 
-## ⚠️ Estado: não funciona ainda
+## Estado (itens B.1–B.3 do [plano](../../docs/plano.md))
 
-Este é só o **esqueleto** do item `1.2` do [plano](../../docs/plano.md) do projeto. `createAgent` e
-`resume` lançam `Error("not implemented yet — item 1.3")` **de propósito**. Não há chamada real ao
-Claude Agent SDK, não há streaming, não há aprovação de ferramenta, não há retomada de sessão. Isso
-é o item `1.3` em diante.
+**Funciona**: uma sessão criada com este plugin no lugar do `agent-loop` sobe o
+`claude-agent-acp` como subprocesso, faz o handshake ACP, manda o prompt do usuário e traduz a
+resposta de texto de volta para o log de sessão do DSH.
+
+Sequência verificada rodando o servidor SDK do DSH (`session/prompt` → notificações
+`session.event`), em 12/10/2026:
+
+```
+turn/start {"turn":1}
+step/start {"turn":1,"step":1}
+assistant/message {"turn":1,"step":1,"message":{... "text":"pong" ...}}
+step/end {"turn":1,"step":1}
+turn/end {"turn":1,"reason":{"kind":"completed"}}
+```
+
+**Ainda não feito**:
+
+- `agent/assistant-stream` (o texto chegando ao vivo) — hoje a mensagem só aparece inteira no
+  `assistant/message` do fim do turno. Sem isso não há "streaming no chat", só resposta completa.
+- **B.4** aprovação de ferramenta e **B.5** retomada de sessão (`resume` ainda lança
+  `Error("not implemented yet — item B.5")`, de propósito).
 
 ## Como se encaixa no plano
 
@@ -22,13 +39,14 @@ registra sozinho no construtor da sua classe de plugin, chamando
 registro (não a lógica interna do loop padrão): um plugin que, instalado num perfil do DSH no lugar
 do `agent-loop`, assume esse papel para sessões do Claude Code.
 
-Ver [docs/analise-inicial.md](../../docs/analise-inicial.md) (seção 3, opção B) e
-[docs/plano.md](../../docs/plano.md) (fase F1, itens `1.2` a `1.5`) para o desenho completo:
+O motor é uma **ponte ACP** (decisão do dono em 12/10/2026, opção C): o adapter
+`@agentclientprotocol/claude-agent-acp` faz o trabalho difícil; o plugin só traduz `session/update`
+do ACP para `SessionEvent` do DSH e vice-versa. Nada de reimplementar o laço do modelo.
 
-- **1.2 (este item):** esqueleto do plugin, registra o `AgentFactory`, sem execução real.
-- **1.3:** criar sessão e ver resposta em streaming no chat.
-- **1.4:** aprovação de ferramenta do SDK aparecendo na aprovação da UI do DSH.
-- **1.5:** retomar sessão depois de reiniciar.
+Ver [docs/analise-inicial.md](../../docs/analise-inicial.md) e [docs/plano.md](../../docs/plano.md)
+(fase F1) para o desenho completo, e
+[docs/event-sequence.md](docs/event-sequence.md) para a sequência de eventos que este plugin
+reproduz.
 
 ## Estrutura
 
@@ -36,38 +54,43 @@ Ver [docs/analise-inicial.md](../../docs/analise-inicial.md) (seção 3, opção
 package.json       # nome "harness-deck-claude-code" (sem "dsh" no nome, por regra do AGENTS.md
                     # do projeto — plugin específico de harness pode ter o nome do harness)
 tsconfig.json       # compila src/ para lib/
-src/index.ts        # a classe ClaudeCodeAgentLoop (plugin cordis / AgentFactory)
-src/types/*.d.ts    # stubs locais de tipos — ver aviso abaixo
+src/index.ts        # ClaudeCodeAgentLoop (plugin cordis / AgentFactory) + a fachada ClaudeCodeAgent
+docs/event-sequence.md
 ```
 
 ## Dependências e por que peer + dev
 
-`@deepseek-ai/cordis` e `@deepseek-ai/dsh-agent` estão declaradas como **peerDependencies** (nas
-mesmas versões instaladas em `~/.dsh/profiles/node_modules/@deepseek-ai/`: `cordis@~4.0.4` e
-`dsh-agent@0.2.0-rc.2`, mesmo padrão de versionamento usado pelo `dsh-agent-loop` de referência).
-Isso é intencional: este plugin roda **dentro** do processo do DSH, que já traz sua própria cópia
-dessas duas bibliotecas; se este pacote trouxesse a própria cópia como dependência normal, um perfil
-real acabaria com duas instâncias de `cordis` (e provavelmente dois `AgentRegistry` incompatíveis).
-As mesmas duas entradas aparecem também em **devDependencies** só para o ambiente de desenvolvimento
-ter os tipos disponíveis ao compilar isoladamente — sem isso, `tsc` deste pacote não teria onde
-resolver `@deepseek-ai/cordis` / `@deepseek-ai/dsh-agent`.
+`@deepseek-ai/cordis`, `@deepseek-ai/dsh-agent`, `@deepseek-ai/dsh-session` e
+`@deepseek-ai/dsh-llm` estão declaradas como **peerDependencies** (mesmas versões da instalação do
+DSH: `cordis@~4.0.4` e `0.2.0-rc.2`). Isso é intencional: este plugin roda **dentro** do processo do
+DSH, que já traz a própria cópia dessas bibliotecas; **trazer uma cópia própria quebra o plugin** —
+foi um defeito real observado em 12/10/2026, com o sintoma `cannot get property "sessions" without
+inject` ao criar a sessão, porque o registro de serviço do `cordis` não enxergava a classe vinda de
+outra instância da biblioteca.
 
-## Aviso sobre `src/types/deepseek-ai-stubs.d.ts`
+As mesmas entradas aparecem em **devDependencies** só para o ambiente de desenvolvimento ter os
+tipos ao compilar. Nesse ambiente, os pacotes `@deepseek-ai/*` de
+`packages/harness-deck-claude-code/node_modules/` devem ser **links** para a instalação do DSH
+(`/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`), como já são os de
+`~/.dsh/profiles/node_modules/@deepseek-ai/`. Numa instalação real isso é automático: o plugin mora
+em `profiles/<perfil>/node_modules/` e resolve as cópias compartilhadas do perfil.
 
-Este esqueleto **não teve `npm install` rodado** (sem rede garantida no ambiente onde foi criado).
-Sem os pacotes reais em `node_modules`, o `tsc` não resolve os módulos `@deepseek-ai/cordis` e
-`@deepseek-ai/dsh-agent`. `src/types/deepseek-ai-stubs.d.ts` declara, à mão, só o pedaço desses dois
-pacotes que `src/index.ts` usa (copiado da leitura dos `.d.ts` reais instalados em
-`/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/`). **Apague esse arquivo**
-assim que os pacotes reais forem instalados como dependências — as declarações ambientes dele
-entram em conflito ou ficam redundantes com os `.d.ts` verdadeiros.
-
-## Como compilar
+## Como compilar e testar
 
 ```bash
 cd packages/harness-deck-claude-code
-npx tsc -p tsconfig.json
+npm run build     # tsc -p tsconfig.json
 ```
 
-(Requer um ambiente com `typescript` instalado e, para compilar "de verdade" fora do modo stub,
-`@deepseek-ai/cordis` e `@deepseek-ai/dsh-agent` instalados como dependências reais.)
+Para exercitar de ponta a ponta sem depender de provedor, suba um endpoint Anthropic falso local,
+aponte o subprocesso para ele e rode o smoke do servidor SDK do DSH:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787 ANTHROPIC_AUTH_TOKEN=test ANTHROPIC_API_KEY=test \
+ANTHROPIC_MODEL=claude-sonnet-5 ANTHROPIC_SMALL_FAST_MODEL=claude-haiku-4.5 \
+CLAUDE_CONFIG_DIR=<dir com settings.json vazio> \
+DSH_HOME=<home isolado do DSH> node .run-sdk-smoke.mjs
+```
+
+`CLAUDE_CONFIG_DIR` importa: sem ele o `~/.claude/settings.json` do usuário sobrescreve a
+`ANTHROPIC_BASE_URL` e o teste fala com o provedor real.
