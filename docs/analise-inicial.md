@@ -87,8 +87,14 @@ harness sem um plugin por harness).
   (`dsh-agent-loop/lib/index.js:1563`) e entra pela linha `id: agent-loop` do
   `dsh-base/cordis.patch.yml:511`. Cada perfil sobe um processo próprio, então dá para ter um
   perfil `claude` com `- id: agent-loop / disabled: true` e o plugin no lugar.
-  **Não verificado:** se o perfil sobe sem o loop. Vários plugins declaram dependência de
-  `dsh-agent-loop` (título de sessão, subagente, goal, compactação, plan-mode); podem quebrar.
+  **Testado em 12/10/2026:** perfil `hd-probe` (cópia do template `web`) com o overlay
+  [probes/no-agent-loop.yml](../probes/no-agent-loop.yml) **sobe sem erro** na porta 3190, sem o
+  loop. `DSH_HOME=~/.harnessdeck` isola o perfil do `~/.dsh` (variável lida em
+  `dsh-home-paths/lib/index.js:15`). **Não testado:** criar sessão e conversar nesse perfil (sem
+  factory, deve falhar até o plugin existir); se título de sessão, subagente, goal e compactação
+  funcionam com outro motor.
+- **Cuidado ao testar:** `dsh <perfil> --help` **regrava** `profiles/<perfil>/cordis.yml`. Rodar
+  `dsh` deste projeto sempre com `DSH_HOME=~/.harnessdeck`.
 - **Dois perfis = dois processos e duas URLs.** Com o REQ-01 e o REQ-02 isso deixa de ser problema
   e vira o desenho: um perfil (processo) por harness, cada um com seus workspaces, e a extensão
   própria mostrando um painel por URL. O factory "despachante" (dois motores no mesmo processo) sai

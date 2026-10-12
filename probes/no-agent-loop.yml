@@ -1,0 +1,5 @@
+# Probe overlay: boot a profile without the default DSH agent loop, to check
+# which plugins depend on it before a custom AgentFactory takes its place.
+# Use only with DSH_HOME=~/.harnessdeck (never against ~/.dsh).
+- id: agent-loop
+  disabled: true
