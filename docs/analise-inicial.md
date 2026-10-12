@@ -111,8 +111,9 @@ harness sem um plugin por harness).
   Pro/Max (leitura dos termos, não conferido o texto em 12/10/2026).
 - **Paperclip:** não verificado se o `claude_local` repassa `ANTHROPIC_BASE_URL`; bug aberto de
   chave perdida no heartbeat ([#856](https://github.com/paperclipai/paperclip/issues/856)).
-- **Nome:** "Harness" também é marca de uma empresa de CI/CD (harness.io). Pesa só se virar
-  produto. `harness-deck` estava livre no npm e em `github.com/georgesq` em 12/10/2026.
+- **Nome — decidido pelo dono em 12/10/2026:** mantém `harness-deck`. "Harness" também é marca de
+  uma empresa de CI/CD (harness.io); o risco de confusão foi aceito. Repositório já criado em
+  [github.com/georgesq/harness-deck](https://github.com/georgesq/harness-deck), público.
 
 ## 7. Custo
 
