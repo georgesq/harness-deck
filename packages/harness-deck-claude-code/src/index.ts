@@ -67,6 +67,7 @@ import {
 } from '@deepseek-ai/dsh-llm';
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope';
 import * as acp from '@agentclientprotocol/sdk';
+import { ensureModelProxy } from './model-proxy.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -104,12 +105,26 @@ async function resolveAcpBinPath(configured: string | undefined): Promise<string
 type AcpChildProcess = ChildProcessByStdio<NodeWritable, NodeReadable, null>;
 
 /** Spawn `claude-agent-acp` as a child process speaking ACP over stdio. */
-function spawnAcpAgent(binPath: string, cwd: string): AcpChildProcess {
+function spawnAcpAgent(binPath: string, cwd: string, env: NodeJS.ProcessEnv): AcpChildProcess {
   return spawn(process.execPath, [binPath], {
     cwd,
     stdio: ['pipe', 'pipe', 'inherit'],
-    env: process.env,
+    env,
   });
+}
+
+/**
+ * Environment for the ACP child.
+ *
+ * When the deck configured a model mapping (`HARNESS_DECK_MODEL_MAP`), the CLI
+ * is pointed at the loopback gateway instead of the provider: the CLI only
+ * accepts model ids its own catalog describes, and the provider only accepts
+ * its own slugs. `model-proxy.ts` bridges the two.
+ */
+async function acpChildEnv(): Promise<NodeJS.ProcessEnv> {
+  const proxy = await ensureModelProxy();
+  if (!proxy) return process.env;
+  return { ...process.env, ANTHROPIC_BASE_URL: proxy.baseUrl };
 }
 
 /**
@@ -593,7 +608,7 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
 
     const cwd = options.meta?.cwd ?? process.cwd();
     const binPath = await resolveAcpBinPath(this.config.acpBinPath);
-    const child = spawnAcpAgent(binPath, cwd);
+    const child = spawnAcpAgent(binPath, cwd, await acpChildEnv());
     const bridgeAbort = new AbortController();
 
     // Agent-scoped dispatcher, built once per agent like `dsh-agent-loop`
