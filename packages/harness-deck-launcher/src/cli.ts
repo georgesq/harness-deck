@@ -9,6 +9,7 @@
  *   down    stop every enabled harness
  *   status  one harness, with its URL and log tail
  *   logs    print the log of one harness
+ *   workspace  list or add workspace folders, per harness or in all of them
  *
  * The registry is `<home>/harnesses.json`; nothing here touches `~/.dsh`.
  */
@@ -51,6 +52,7 @@ import {
   type HarnessState,
 } from './launcher.ts';
 import { materializeProfile, profileDir, type MaterializeResult } from './materialize.ts';
+import { addWorkspace, listWorkspaces, readWorkspaces, removeWorkspace } from './workspaces.ts';
 
 /** Default port of the first harness; the rest follow in sequence. */
 const FIRST_PORT = 3100;
@@ -147,6 +149,10 @@ Uso:
   harness-deck down [<nome>...]
   harness-deck status <nome>
   harness-deck logs <nome> [--tail <linhas>]
+  harness-deck workspace list [--harness <nome>]
+  harness-deck workspace add <caminho> [--harness <nome>]... [--title <titulo>]
+  harness-deck workspace remove <caminho> [--harness <nome>]...
+                          (sem --harness, vale para todos os harnesses)
 
 Flags globais:
   --home <dir>   raiz do harness-deck (padrão: $${HARNESS_DECK_HOME_ENV} ou ${DEFAULT_HARNESS_DECK_HOME})
@@ -185,6 +191,9 @@ async function main(): Promise<void> {
       return;
     case 'logs':
       await commandLogs(home, options);
+      return;
+    case 'workspace':
+      await commandWorkspace(home, options);
       return;
     default:
       fail(`comando desconhecido "${options.command}" (veja \`harness-deck help\`)`);
@@ -416,6 +425,78 @@ async function commandStatus(home: string, options: Options): Promise<void> {
   process.stdout.write(`chave:    ${keyEnv} ${process.env[keyEnv] ? '(no ambiente)' : '(ausente do ambiente)'}\n`);
   if (entry.provider) {
     process.stdout.write(`provider: ${entry.provider.kind} / ${entry.provider.model}\n`);
+  }
+}
+
+/**
+ * Resolve which harnesses a command targets: the ones named by `--harness`
+ * (repeatable), or every enabled harness in the registry.
+ */
+function targetHarnesses(registry: Registry, options: Options): HarnessEntry[] {
+  const names = options.flags.get('harness') ?? [];
+  if (names.length === 0) return registry.harnesses.filter((entry) => entry.enabled !== false);
+  const chosen: HarnessEntry[] = [];
+  for (const name of names) {
+    const entry = findHarness(registry, name);
+    if (entry === undefined) fail(`harness "${name}" não está no registro`);
+    chosen.push(entry);
+  }
+  return chosen;
+}
+
+/**
+ * `workspace list` and `workspace add`.
+ *
+ * One DSH_HOME per harness (REQ-02) means the workspace list lives inside each
+ * harness: the folder has to be registered once per harness. Without
+ * `--harness`, `add` registers it in all of them.
+ *
+ * A running harness keeps the unit in memory and writes the whole document
+ * back, so a write while it runs is lost on the next mutation. The command
+ * warns and asks for a restart instead of pretending it worked.
+ */
+async function commandWorkspace(home: string, options: Options): Promise<void> {
+  const action = options.positionals[0] ?? 'list';
+  if (action !== 'add' && action !== 'list' && action !== 'remove') {
+    fail(`workspace aceita "add", "list" ou "remove", não "${action}"`);
+  }
+  const registry = await loadRegistry(home);
+  const entries = targetHarnesses(registry, options);
+
+  if (action === 'list') {
+    for (const entry of entries) {
+      const dshHome = harnessHome(home, entry);
+      const unit = await readWorkspaces(dshHome);
+      const workspaces = listWorkspaces(unit);
+      process.stdout.write(`${entry.name}: ${workspaces.length} workspace(s)\n`);
+      for (const workspace of workspaces) {
+        process.stdout.write(`  ${workspace.path}  (${workspace.title})\n`);
+      }
+    }
+    return;
+  }
+
+  const folder = options.positionals[1];
+  if (folder === undefined) fail(`workspace ${action} precisa do caminho da pasta`);
+  const title = flag(options, 'title');
+  for (const entry of entries) {
+    const state = await inspect(home, entry);
+    if (action === 'remove') {
+      const removed = await removeWorkspace(harnessHome(home, entry), folder);
+      const what = removed.removed ? `removido (${removed.sessions} sessão(ões) saíram da lista)` : 'não estava';
+      process.stdout.write(`${entry.name}: ${what} ${removed.path}\n`);
+      continue;
+    }
+    const result = await addWorkspace(harnessHome(home, entry), folder, title);
+    const what = result.existing ? 'já estava' : 'adicionado';
+    process.stdout.write(`${entry.name}: ${what} ${result.path}\n`);
+    if (!result.existing && state.running) {
+      process.stdout.write(
+        `  aviso: o harness ${entry.name} está no ar e mantém a lista em memória — ` +
+          `rode \`harness-deck down ${entry.name}\` e de novo \`harness-deck up ${entry.name}\` ` +
+          'para o workspace aparecer\n',
+      );
+    }
   }
 }
 
