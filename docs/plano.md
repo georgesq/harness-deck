@@ -21,7 +21,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 | # | Item | Status |
 |---|---|---|
 | 1.1 | Agent SDK falando com a Avello (`ANTHROPIC_BASE_URL` + chave do ambiente) | ⛔ chave não chega ao shell do agente |
-| 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ⏳ |
+| 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
 | 1.3 | Criar sessão e ver a resposta em streaming no chat | ⏳ |
 | 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI | ⏳ |
 | 1.5 | Retomar sessão depois de reiniciar | ⏳ |
