@@ -3,7 +3,7 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 13:42 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 14:45 (America/Sao_Paulo)
 
 ## Agora
 
@@ -47,12 +47,23 @@
   sucesso. Corrigido: sem texto, o turno fecha como `assistant/attempt` +
   `turn/end reason=error code=EMPTY_RESPONSE` (o código que o motor padrão já usa para resposta
   vazia). Verificado matando o subprocesso aos 4 s de um turno que o provedor segurava por 60 s.
-- [ ] **Item B.3** — teste na Web GUI do perfil isolado. O turno completo já está provado sem GUI;
-  falta abrir a GUI e ver a resposta desenhada no chat.
+- [x] **Item B.3 — completo: o texto aparece crescendo no chat da GUI.** Verificado com navegador
+  sem cabeça (Playwright) contra o servidor do perfil isolado, **dirigindo a página de verdade**:
+  o chat foi criado, o prompt foi aceito e a resposta foi desenhada progressivamente. Numa pergunta
+  "números de 1 a 30 separados por vírgula", o DOM mostrava **5 números aos 9,2 s, 10 aos 9,6 s,
+  13 aos 10,0 s, 26 aos 10,4 s e os 30 aos 10,8 s** (amostras de 400 ms), fechando com
+  `turn/end reason=completed`. A captura do meio do stream está em `.run/gui-stream-t26.png`
+  (fora do git) — aos 10,4 s a tela mostrava `1, 2, …, 26`. Num turno curto: frames `rev=1..6`
+  densos, `assistant/message seq=7 text="pong"`, `turn/end completed`.
+- **Por que a GUI achou o que os testes anteriores não acharam.** O teste de B.1/B.2 cria a sessão
+  pelo **servidor SDK**, que não passa pelo `mount` de preset nem pelo serviço de upload de arquivo
+  do controlador de sessão da GUI. Dois defeitos de escopo (itens 6 e 7 abaixo) só existem nesse
+  caminho — e o sintoma que chegava ao dono era "não consigo criar um new chat ou informar uma
+  workspace", sem nome de serviço nem causa.
 
 ## Defeitos reais encontrados e corrigidos nesta rodada
 
-Cinco erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles visível por leitura:
+Sete erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles visível por leitura:
 
 1. **Duas cópias do `cordis`.** O plugin tinha `@deepseek-ai/cordis` e `dsh-*` instalados em
    `node_modules/` próprios e resolvia a própria cópia, o que quebra o registro de serviço do DSH.
@@ -78,6 +89,17 @@ Cinco erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles
    com cara de sucesso. Corrigido com `EMPTY_RESPONSE` (detalhe acima). Lição mais geral: **"fim de
    turno" devolvido pelo adaptador não significa que o turno deu certo**; quem traduz tem de
    conferir se veio conteúdo.
+6. **`Agent preset binding requires a scoped context` — a GUI criava a sessão e morria.** O plugin
+   entregava ao agente um `ownerCtx.extend()`, que copia a cadeia de contexto mas **não** a marca de
+   escopo do `@deepseek-ai/dsh-scope`. Sem essa marca o `agent-preset-registry` recusa ligar o
+   preset (`dsh-agent-preset-registry/lib/index.js:663`) e a criação da sessão falha. O motor padrão
+   minta o escopo dentro do construtor do driver (`dsh-agent-loop/lib/index.js:778`); o plugin
+   passou a fazer o mesmo.
+7. **`prompt rejected (session/agent-busy)` — o chat criava e recusava o texto.** A chave do escopo
+   tem de ser **o próprio agente**: o serviço de upload de arquivo confere
+   `scopeOf(agent.ctx) === agent` (`dsh-client-file-upload/lib/index.js:297`) e, com uma chave
+   qualquer, o primeiro prompt é recusado. O rótulo que chega à tela não nomeia o serviço nem a
+   causa. Lição: **escopo de agente no DSH não é só "ter escopo" — é ter o agente como chave.**
 
 ## Subagentes em segundo plano
 
@@ -117,5 +139,8 @@ e passa limpo, e o `claude-agent-acp` **está instalado** (`0.89.1`) como depend
 
 ## Próxima decisão do dono
 
-- Nenhuma pendente. O teste com provedor real passou pelo OpenRouter; a Avello pode ficar como
-  está (a conta sem crédito não bloqueia mais nada).
+- Nenhuma travando. O teste com provedor real passou pelo OpenRouter; a Avello pode ficar como está
+  (a conta sem crédito não bloqueia mais nada).
+- **Em aberto, de produto:** hoje o teste é um servidor lançado à mão (`dsh hd-web --port 3099`). O
+  alvo é uma extensão do VS Code que sobe o perfil isolado sozinha e mostra um painel por harness
+  (REQ-01, REQ-02, REQ-04). Falta o dono escolher quando isso entra.
