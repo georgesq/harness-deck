@@ -24,6 +24,33 @@
   não fork) abre **uma aba por harness** na mesma janela. Compila limpo e passa em teste sem VS Code
   (`node test/smoke.mjs`). Falta empacotar o `.vsix` e instalar.
 
+## Como o dono escolhe harness e provedor/modelo (decidido em 12/10/2026)
+
+**Caminho A, sem duplicar UI.** A escolha de **harness** é no registro (lista lateral do painel, um
+item por harness). A escolha de **provedor/modelo** é no **seletor nativo do DSH, dentro do painel de
+cada harness** — o painel do VS Code não tem seletor próprio, para não manter duas verdades.
+
+Onde cada coisa vive:
+
+| O quê | Onde | Quem escreve |
+|---|---|---|
+| Quais harnesses existem, porta, motor, provedor/modelo **inicial** | `<raiz>/harnesses.json` | CLI (`harness-deck add`) |
+| Provedor/modelo **em uso** | `<DSH_HOME>/profiles/<nome>/cordis.patch.yml`, linha `agent-default-model` | o próprio DSH, quando o dono troca no seletor da GUI |
+| Rota do provedor (URL base, `apiKeyEnv`, lista de modelos) | a linha `llm-pi-ai` do mesmo arquivo | CLI, a partir do registro |
+
+Verificado no código: `AgentDefaultModelConfig.saveSelection` grava via o serviço `configEditor`
+(`dsh-agent-default-model/lib/index.js:53-66`), e o `configEditor` reescreve **a linha** do patch com
+`writeFileAtomic`, preservando comentários e as demais linhas
+(`dsh-config-editor/lib/index.js:88-130`). Ou seja: o modelo escolhido é durável e **é por harness**,
+porque cada harness tem o seu `DSH_HOME`.
+
+**Defeito de produto corrigido no caminho:** o lançador regerava o `cordis.patch.yml` inteiro a cada
+`up`, o que **desfazia silenciosamente** a escolha do dono, voltando ao default do registro. Agora as
+linhas `agent-default-model` e `llm-pi-ai` pertencem ao harness que já rodou: o registro só as semeia
+na primeira materialização e atualiza o resto. Coberto por `packages/harness-deck-launcher/test/merge-patch.test.ts`
+(9 verificações, incluindo idempotência) e conferido na raiz real: troquei o modelo no perfil do
+`claude`, subi com `up` e a escolha sobreviveu.
+
 ## Por que implementação própria e não fork (item 2.4)
 
 A extensão instalada (`vithrive.deepseek-harness-vscode` 1.0.0, MIT) é um singleton de verdade: 20
