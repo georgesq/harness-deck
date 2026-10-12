@@ -21,9 +21,11 @@ import {
   HARNESS_DECK_HOME_ENV,
   PROVIDER_KEY_ENV,
   RegistryError,
+  envFilePath,
   findHarness,
   harnessHome,
   harnessesHome,
+  loadEnvFile,
   loadRegistry,
   portOwner,
   registryPath,
@@ -352,10 +354,13 @@ async function commandUp(home: string, options: Options): Promise<void> {
   if (entries.length === 0) fail('nenhum harness para subir (registro vazio ou tudo desativado)');
   const pluginPath = resolve(flag(options, 'plugin') ?? defaultPluginPath());
   const waitMs = Number.parseInt(flag(options, 'wait') ?? '30000', 10);
+  const envFile = await loadEnvFile(home);
   for (const entry of entries) {
     const keyEnv = credentialEnv(entry);
-    if (!process.env[keyEnv]) {
-      process.stderr.write(`aviso: ${keyEnv} não está no ambiente — o harness "${entry.name}" sobe, mas o modelo vai falhar\n`);
+    if (!process.env[keyEnv] && !envFile[keyEnv]) {
+      process.stderr.write(
+        `aviso: ${keyEnv} não está no ambiente nem em ${envFilePath(home)} — o harness "${entry.name}" sobe, mas o modelo vai falhar\n`,
+      );
     }
     const result = await startHarness(home, entry, { pluginPath });
     if (result.alreadyRunning) {

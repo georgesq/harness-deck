@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { harnessHome, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
+import { harnessHome, loadEnvFile, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
 import { materializeProfile, pathExists, profileDir, type MaterializeResult } from './materialize.ts';
 
 /** Name of the executable the launcher spawns. */
@@ -122,7 +122,7 @@ export async function inspectAll(home: string, registry: Registry): Promise<Harn
 export interface StartOptions {
   /** Path of the `harness-deck-claude-code` package, for the `claude-code` engine. */
   pluginPath: string;
-  /** Extra environment for the child process, on top of `process.env`. */
+  /** Extra environment for the child process, on top of `process.env` and the deck `.env`. */
   env?: NodeJS.ProcessEnv;
   /** Skip materializing the profile first (used by tests). */
   skipMaterialize?: boolean;
@@ -137,15 +137,19 @@ export interface StartOptions {
  * (`llm-pi-ai`'s `apiKeyEnv`), which the child inherits from the launcher's
  * environment. When the harness has an Anthropic-shaped endpoint of its own
  * (`providerBaseUrl`), that wins.
+ *
+ * @param entry - the harness being started.
+ * @param fromFile - variables read from the deck `.env`, which fill in a key the
+ *   caller's own environment does not have.
  */
-export function providerEnv(entry: HarnessEntry): NodeJS.ProcessEnv {
+export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   if (entry.providerBaseUrl) {
     env.ANTHROPIC_BASE_URL = entry.providerBaseUrl;
     return env;
   }
   if (entry.engine !== 'claude-code' || !entry.provider) return env;
-  const key = process.env[entry.provider.apiKeyEnv];
+  const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
   env.ANTHROPIC_BASE_URL = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
   return env;
@@ -193,6 +197,12 @@ export async function startHarness(home: string, entry: HarnessEntry, options: S
 
   const dshHome = harnessHome(home, entry);
   await mkdir(dshHome, { recursive: true });
+  // The provider key comes from `<deck home>/.env` (owner's decision of
+  // 12/10/2026): neither the CLI nor the VS Code extension host inherits an
+  // interactive shell, so a key exported in `~/.bashrc` reaches nobody. A value
+  // already present in the real environment wins, which keeps a one-off
+  // `KEY=… harness-deck up` possible.
+  const envFile = await loadEnvFile(home);
   // `dsh --profile <name>` boots the profile; everything after the launcher's own
   // flags reaches the app, so `--port` and `--no-open` are the web app's.
   const args = ['--profile', entry.profile, '--port', String(entry.port), '--no-open'];
@@ -201,8 +211,9 @@ export async function startHarness(home: string, entry: HarnessEntry, options: S
     detached: true,
     stdio: ['ignore', logHandle.fd, logHandle.fd],
     env: {
+      ...envFile,
       ...process.env,
-      ...providerEnv(entry),
+      ...providerEnv(entry, envFile),
       ...options.env,
       DSH_HOME: dshHome,
     },

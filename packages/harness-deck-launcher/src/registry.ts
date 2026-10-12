@@ -24,6 +24,17 @@ export const DEFAULT_HARNESS_DECK_HOME = join(homedir(), '.harnessdeck');
 /** File name of the registry inside the harness-deck home. */
 export const REGISTRY_FILE = 'harnesses.json';
 
+/**
+ * File name of the credential file inside the harness-deck home.
+ *
+ * The owner decided on 12/10/2026 that the provider keys live here and only
+ * here: neither the VS Code extension host nor the process that boots the DSH
+ * inherits an interactive shell, so a key in `~/.bashrc` reaches nobody. Both
+ * the CLI and the panel read this file and hand the values to the harness
+ * process. The file is never written by this tool and never committed.
+ */
+export const ENV_FILE = '.env';
+
 /** Current registry schema version. */
 export const REGISTRY_VERSION = 1;
 
@@ -127,6 +138,53 @@ export function expandTilde(path: string): string {
 /** Absolute path of the registry file inside a harness-deck home. */
 export function registryPath(home: string): string {
   return join(home, REGISTRY_FILE);
+}
+
+/** Absolute path of the credential file inside a harness-deck home. */
+export function envFilePath(home: string): string {
+  return join(home, ENV_FILE);
+}
+
+/**
+ * Read the credential file of a harness-deck home.
+ *
+ * Format is the shell `KEY=value` one, which is what `.env` files already are;
+ * `export` prefixes, surrounding quotes and `#` comments are accepted so a file
+ * copied from a shell profile keeps working. A missing file is empty, not an
+ * error: a harness with no provider needs no key.
+ *
+ * @param home - the harness-deck home.
+ * @returns the parsed variables; never the file's own text.
+ */
+export async function loadEnvFile(home: string): Promise<Record<string, string>> {
+  let raw: string;
+  try {
+    raw = await readFile(envFilePath(home), 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw new RegistryError(`cannot read ${envFilePath(home)}: ${(error as Error).message}`);
+  }
+  return parseEnvFile(raw);
+}
+
+/** Parse the `KEY=value` text of a `.env` file. */
+export function parseEnvFile(raw: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const line of raw.replace(/\r\n/g, '\n').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const body = trimmed.startsWith('export ') ? trimmed.slice('export '.length).trim() : trimmed;
+    const separator = body.indexOf('=');
+    if (separator <= 0) continue;
+    const key = body.slice(0, separator).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = body.slice(separator + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"') && value.length > 1) || (value.startsWith("'") && value.endsWith("'") && value.length > 1)) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
 }
 
 /** Absolute path of the profiles directory inside a harness-deck home. */
