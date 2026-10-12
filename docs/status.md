@@ -3,7 +3,7 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 16:26 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 16:32 (America/Sao_Paulo)
 
 ## Agora
 
@@ -25,6 +25,10 @@
   (`node test/smoke.mjs`). Falta empacotar o `.vsix` e instalar.
 - [x] **Credenciais concentradas em `<raiz>/.env`** (decisão do dono). CLI e painel leem o arquivo e
   entregam as variáveis ao harness; `~/.bashrc` não é mais caminho de chave. Ver seção abaixo.
+- [x] **Protocolo de contribuição** (decisão do dono em 12/10/2026: o repositório é aberto e a
+  `main` é fechada para escrita direta, inclusive do mantenedor). [CONTRIBUTING.md](../CONTRIBUTING.md),
+  [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) e os modelos de issue e de pull request em `.github/`.
+  Ver seção abaixo.
 - [ ] **Rotacionar a chave do OpenRouter** — ela foi impressa em texto puro no transcript desta
   sessão. Colar a chave nova em `~/.harnessdeck/.env` (arquivo já criado, modo `600`, campo vazio).
 
@@ -93,6 +97,34 @@ Implementado:
 
 **Pendência do dono:** a chave do OpenRouter foi impressa em texto puro no transcript desta sessão;
 deve ser **rotacionada** (a que está no `.env` é a mesma, já validada).
+
+## Repositório aberto, `main` fechada (12/10/2026)
+
+**Decisão do dono:** o projeto é aberto para a comunidade melhorar e acrescentar, mas **ninguém
+escreve na `main`** — só pull request, inclusive do mantenedor. O que existe hoje, conferido pela API
+do GitHub:
+
+| Configuração | Estado |
+|---|---|
+| Visibilidade | `PUBLIC` |
+| Descrição | preenchida |
+| Licença | MIT |
+| Issues | habilitadas |
+| Proteção da `main` | ativa |
+| PR obrigatório antes do merge | sim |
+| Push direto / force push / apagar a branch | bloqueados |
+| Revisão obrigatória | **0 aprovadores** |
+| `enforce_admins` | **desligado** — o dono passa por cima |
+| Rulesets | nenhum |
+
+Sem revisão obrigatória, um PR de terceiro pode ser mergeado por quem tem escrita sem passar por
+outro par de olhos. Ligar `required_approving_review_count = 1` resolve, mas aí o próprio PR do dono
+também precisa de aprovação de outra conta.
+
+Protocolo escrito: [CONTRIBUTING.md](../CONTRIBUTING.md) (o que é bem-vindo, o que pede aval antes
+do código, o que fica fora, como preparar o PR e o que o mantenedor avalia),
+[CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md), modelo de PR e dois modelos de issue (defeito e
+melhoria/novo harness) em `.github/`.
 
 ## Por que implementação própria e não fork (item 2.4)
 
