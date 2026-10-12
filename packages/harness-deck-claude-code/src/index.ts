@@ -659,6 +659,11 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
           if (userMessage === undefined) return;
 
           agent.markRunning();
+          // The session controller only learns that a turn is in flight from
+          // `agent/status` (`dsh-api-session-controller/lib/index.js:2884`), which
+          // the default engine emits and this bridge did not — without it the GUI
+          // never mounts its running indicator.
+          dispatch.emit('agent/status', { status: 'running' });
           turn += 1;
           const step = 1;
           session.append('turn/start', { turn });
@@ -756,6 +761,7 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
             session.append('step/end', { turn, step });
             session.append('turn/end', { turn, reason: turnEnds });
             agent.markIdle();
+            dispatch.emit('agent/status', { status: 'idle' });
           }
         }
       });
