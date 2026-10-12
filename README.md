@@ -58,7 +58,17 @@ node $CLI add claude --engine claude-code --port 3131
 # 3. subir e abrir a GUI (o comando imprime a URL com o token)
 node $CLI up --wait 45000
 node $CLI down
+
+# 4. pastas que aparecem na GUI — uma DSH_HOME por harness (REQ-02) significa
+#    que cada harness tem a sua lista; sem --harness, vale para todos
+node $CLI workspace list
+node $CLI workspace add /caminho/do/projeto --title "Projeto"
+node $CLI workspace remove /caminho/do/projeto --harness claude
 ```
+
+`workspace add` grava a unidade `storages/workspace.json` do DSH_HOME daquele harness. Com o
+harness **no ar** a lista vive em memória e o comando seria sobrescrito no próximo clique da GUI:
+suba com o harness parado, ou pare e suba de novo depois.
 
 O comando `harness-deck` no PATH depende de publicar o pacote no npm — ainda **não publicado**.
 Enquanto isso, chame o `bin/harness-deck.mjs` pelo caminho.

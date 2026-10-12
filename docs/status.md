@@ -20,9 +20,23 @@
   recusa com `select a profile only once`, e o processo morria sem escrever nada no log — o harness
   aparecia como "subindo" para sempre. O log do launcher passou a registrar a linha de comando, que é
   o que tornou o defeito visível.
-- [x] **Item 2.4 iniciado: painel do VS Code.** `packages/harness-deck-vscode` (implementação própria,
-  não fork) abre **uma aba por harness** na mesma janela. Compila limpo e passa em teste sem VS Code
-  (`node test/smoke.mjs`). Falta empacotar o `.vsix` e instalar.
+- [x] **Item 2.4: painel do VS Code instalado.** `packages/harness-deck-vscode` (implementação própria,
+  não fork) abre **uma aba por harness** na mesma janela. Empacotado em `.vsix` por
+  `node build-package.mjs` (o `.vsix` é um zip com as entradas sob `extension/`, então não precisa de
+  ferramenta de terceiro) e **instalado no VS Code do dono** como `georgesq.harness-deck-vscode@0.1.0`;
+  a aba **Harness Deck** apareceu na barra após recarregar a janela. Teste sem VS Code:
+  `node test/smoke.mjs`; teste do lançador: `npm test` (duas suítes).
+- [x] **Workspace por harness (defeito de uso corrigido).** O dono não conseguia apontar uma pasta
+  nova para o harness que queria: a GUI só registra pasta no harness da porta aberta, e uma
+  `DSH_HOME` por harness (REQ-02) faz cada harness ter a sua lista. Entrou
+  `harness-deck workspace list|add|remove <pasta> [--harness <nome>]... [--title <titulo>]` —
+  sem `--harness`, vale para todos. Grava a unidade `storages/workspace.json` do DSH_HOME alvo, na
+  forma que `@deepseek-ai/dsh-workspace` lê (versão 2), com caminho canonicalizado por `realpath` para
+  não duplicar a mesma pasta escrita de dois jeitos. **Cuidado documentado:** com o harness no ar a
+  lista vive em memória e a gravação seria perdida no próximo clique da GUI — o comando avisa e pede
+  parar/subir. Verificado com 8 verificações (`test/workspaces.test.ts`) e uma raiz de teste em
+  `.run/deck-ws`; a gravação na raiz real `~/.harnessdeck` ficou bloqueada pela política de arquivo
+  desta sessão e precisa de um comando do dono (ver Bloqueios).
 - [x] **Credenciais concentradas em `<raiz>/.env`** (decisão do dono). CLI e painel leem o arquivo e
   entregam as variáveis ao harness; `~/.bashrc` não é mais caminho de chave. Ver seção abaixo.
 - [x] **Protocolo de contribuição** (decisão do dono em 12/10/2026: o repositório é aberto e a
@@ -294,6 +308,13 @@ gancho de pausa (`FAKE_HOLD_MS`) para o teste de abandono descrito acima.
 
 ## Bloqueios
 
+- **Gravar em `~/.harnessdeck` a partir desta sessão.** A política de arquivo desta sessão é
+  `workspace-write` (só o repositório), e a escalada para acesso total falha no executor com
+  `invalid escalation: justification is only valid together with sandbox_permissions` — o campo não
+  chega ao servidor. Consequência prática: o comando `workspace add` funciona (provado numa raiz de
+  teste), mas **a lista de workspaces dos harnesses reais ainda não foi preenchida por mim**. Ou o
+  dono roda o comando (uma linha, na seção "Próxima decisão do dono"), ou me libera acesso total na
+  próxima sessão.
 - **Conta Avello sem crédito — deixou de importar.** `POST
   https://avello.online/v1/messages` com a chave do `.env` responde `HTTP 429`:
   `{"error":{"message":"Avello credit limit exceeded. Try again later.","type":"rate_limit_error","code":"AVELLO_CREDIT_LIMIT_EXCEEDED"}}`.
@@ -330,10 +351,19 @@ e compila.
 
 ## Próxima decisão do dono
 
-- **Empacotar e instalar o painel do VS Code.** O código está pronto e testado fora do VS Code, mas
-  nada foi empacotado (`.vsix`) nem instalado: instalar no seu VS Code é ação no seu ambiente e pede
-  aval. Depois disso o item 2.5 (DSH + Claude Code lado a lado, cada um com seus projetos) é o teste
-  que fecha o portão do F2.
+- **Preencher os workspaces dos harnesses reais** (uma linha; ver Bloqueios):
+  ```bash
+  CLI=/home/georgesq/project/harness-deck/packages/harness-deck-launcher/bin/harness-deck.mjs
+  for p in orchestrator kanban lia saas-hiperlocal-backend; do
+    node $CLI workspace add /home/georgesq/project/$p --harness dsh
+  done
+  node $CLI workspace list
+  ```
+  Com o harness parado. Os harnesses estão parados agora (`claude` terminou depois do teste da GUI).
+- **Empacotar e instalar o painel do VS Code — feito nesta rodada.** Instalado como
+  `georgesq.harness-deck-vscode@0.1.0`; a aba apareceu na barra após recarregar a janela. Falta o dono
+  confirmar que a GUI abre **dentro da aba** e que o item 2.5 (DSH + Claude Code lado a lado, cada um
+  com seus projetos) fecha o portão do F2.
 - **Chave do OpenRouter no ambiente.** O harness `claude` está registrado com
   `OPENROUTER_API_KEY` e o `.env` do projeto só tem `AVELLO_API_KEY`, então o processo sobe e o modelo
   falha. É só exportar a variável (nada vai para arquivo).
