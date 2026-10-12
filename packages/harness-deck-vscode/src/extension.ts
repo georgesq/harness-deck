@@ -29,6 +29,7 @@ import {
   type HarnessEntry,
 } from './registry';
 import { HarnessProcesses, type HarnessState } from './processes';
+import { HarnessProxy } from './proxy';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, openPanelNames, revealHarnessPanel, updateHarnessPanel } from './panel';
 import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './workspaces';
@@ -37,6 +38,7 @@ import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './worksp
 const POLL_MS = 5000;
 
 let processes: HarnessProcesses | undefined;
+let proxy: HarnessProxy | undefined;
 let tree: HarnessTree | undefined;
 let output: ReturnType<typeof window.createOutputChannel> | undefined;
 let poller: ReturnType<typeof setInterval> | undefined;
@@ -56,6 +58,7 @@ function dshCommand(): string {
 /** Build the process manager once per window. */
 function runtime(): HarnessProcesses {
   if (processes !== undefined) return processes;
+  proxy = new HarnessProxy();
   processes = new HarnessProcesses(
     deckHome(),
     dshCommand(),
@@ -88,6 +91,19 @@ async function findHarness(name: string): Promise<HarnessEntry | undefined> {
   return (await listHarnesses()).find((entry) => entry.name === name);
 }
 
+/**
+ * State as the panel should see it.
+ *
+ * The iframe goes through the loopback proxy, which injects the session cookie
+ * the browser would refuse in a cross-site frame; without a proxy URL the panel
+ * keeps the direct one and only the browser button authenticates.
+ */
+async function forPanel(entry: HarnessEntry, state: HarnessState): Promise<HarnessState> {
+  if (!state.listening) return state;
+  const frameUrl = await proxy?.url(deckHome(), entry);
+  return frameUrl === undefined ? state : { ...state, frameUrl };
+}
+
 /** Repaint the tree and re-render the panels whose state changed. */
 async function refresh(): Promise<void> {
   await tree?.refresh();
@@ -95,7 +111,7 @@ async function refresh(): Promise<void> {
   if (open.length === 0) return;
   for (const entry of await listHarnesses()) {
     if (!open.includes(entry.name)) continue;
-    updateHarnessPanel(entry, await runtime().inspect(entry));
+    updateHarnessPanel(entry, await forPanel(entry, await runtime().inspect(entry)));
   }
 }
 
@@ -160,7 +176,7 @@ async function openHarness(entry: HarnessEntry): Promise<void> {
   const autoStart = workspace.getConfiguration('harnessDeck').get<boolean>('autoStart', true);
   let state = await runtime().inspect(entry);
   if (!state.listening && autoStart) state = await startHarness(entry, true);
-  openHarnessPanel(entry, state, { column: ViewColumn.Beside, preserveFocus: false }, () => {
+  openHarnessPanel(entry, await forPanel(entry, state), { column: ViewColumn.Beside, preserveFocus: false }, () => {
     void refresh();
   });
   await refresh();
@@ -348,6 +364,8 @@ export async function activate(context: ExtensionContext): Promise<void> {
 /** Called by VS Code when the extension is deactivated. */
 export async function deactivate(): Promise<void> {
   if (poller !== undefined) clearInterval(poller);
+  proxy?.dispose();
+  proxy = undefined;
   const stopOnExit = workspace.getConfiguration('harnessDeck').get<boolean>('stopOnExit', true);
   if (stopOnExit) await processes?.stopAll();
 }

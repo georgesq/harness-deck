@@ -55,6 +55,10 @@ export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, script
   // the token is only known once the process printed it — so the bar says which
   // of the two URLs the iframe is loading.
   const token = state.url.includes('token=') ? 'sim' : 'nao';
+  // The iframe loads the proxy when there is one: the DSH cookie is `SameSite=Strict`
+  // and a cross-site iframe never gets it, so the direct URL only works in a browser.
+  const frame = state.frameUrl ?? state.url;
+  const aba = state.frameUrl === undefined ? 'direta' : 'proxy';
   const detail = state.listening
     ? `${origin} · ${entry.engine}`
     : `o harness nao esta respondendo em ${origin} — veja o log pelo menu do Harness Deck`;
@@ -62,7 +66,7 @@ export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, script
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${origin}; style-src 'unsafe-inline'; script-src 'nonce-${scriptNonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src ${state.frameUrl ?? origin}; style-src 'unsafe-inline'; script-src 'nonce-${scriptNonce}';">
 <title>${escapeHtml(entry.name)}</title>
 <style>
   html, body { height: 100%; margin: 0; padding: 0; background: var(--vscode-editor-background); }
@@ -87,11 +91,12 @@ export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, script
   <span>${escapeHtml(status)}</span>
   <span>${escapeHtml(detail)}</span>
   <span id="token">token: ${token}</span>
+  <span id="aba">aba: ${aba}</span>
   <button id="open">abrir no navegador</button>
   <button id="reload">recarregar</button>
 </div>
 ${state.listening
-  ? `<iframe id="frame" src="${escapeHtml(state.url)}" allow="clipboard-read; clipboard-write"></iframe>`
+  ? `<iframe id="frame" src="${escapeHtml(frame)}" allow="clipboard-read; clipboard-write"></iframe>`
   : '<div id="offline">Nada respondendo nesta porta. Suba o harness pelo Harness Deck e recarregue.</div>'}
 <script nonce="${scriptNonce}">
   const vscode = acquireVsCodeApi();
@@ -114,6 +119,7 @@ export function panelSignature(state: HarnessState): string {
     state.managed ? 'managed' : 'external',
     state.pid ?? '',
     state.url,
+    state.frameUrl ?? '',
   ].join('|');
 }
 

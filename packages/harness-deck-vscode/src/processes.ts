@@ -36,6 +36,8 @@ export interface HarnessState {
   pid?: number;
   /** Web GUI URL with the session token, once the process printed it. */
   url: string;
+  /** Loopback proxy URL of the GUI, when the panel can be embedded in the tab. */
+  frameUrl?: string;
   /** Last lines of the harness log, for the tooltip and the error path. */
   tail: string;
 }
