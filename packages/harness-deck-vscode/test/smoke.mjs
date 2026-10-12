@@ -9,6 +9,8 @@
 import { createRequire, Module } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -25,6 +27,7 @@ Module._load = function patched(request, parent, isMain) {
 
 const { renderPanelHtml } = require(join(lib, 'panel.js'));
 const { loadRegistry, resolveHome, harnessHome, harnessLogPath } = require(join(lib, 'registry.js'));
+const { guiUrlFromLogs } = require(join(lib, 'processes.js'));
 
 const deckHome = process.argv[2] ?? resolveHome();
 let failures = 0;
@@ -72,6 +75,21 @@ if (first !== undefined) {
 
   check('log fica na raiz do deck', harnessLogPath(deckHome, first).startsWith(join(deckHome, '.run')));
 }
+
+// A window reload empties the in-memory map while the harness keeps running, so
+// the token has to be recovered from the log instead of the bare port.
+const fixtureHome = mkdtempSync(join(tmpdir(), 'hd-deck-'));
+const fixtureEntry = { name: 'probe', profile: 'probe', port: 3199, engine: 'dsh', enabled: true };
+const fixtureLog = join(fixtureHome, '.run', fixtureEntry.name, 'vscode.log');
+mkdirSync(join(fixtureHome, '.run', fixtureEntry.name), { recursive: true });
+writeFileSync(fixtureLog, 'dsh web: http://127.0.0.1:3199/?token=velho\ndsh web: http://127.0.0.1:3199/?token=novo\n', 'utf8');
+check(
+  'token vem do log quando a memoria do painel esta vazia',
+  guiUrlFromLogs(fixtureHome, fixtureEntry) === 'http://127.0.0.1:3199/?token=novo',
+);
+writeFileSync(fixtureLog, 'dsh web: http://127.0.0.1:3131/?token=outra-porta\n', 'utf8');
+check('token de outra porta e ignorado', guiUrlFromLogs(fixtureHome, fixtureEntry) === undefined);
+rmSync(fixtureHome, { recursive: true, force: true });
 
 process.stdout.write(failures === 0 ? '\ntudo ok\n' : `\n${failures} falha(s)\n`);
 process.exit(failures === 0 ? 0 : 1);

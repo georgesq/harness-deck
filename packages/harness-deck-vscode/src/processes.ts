@@ -8,9 +8,9 @@
  * remember the process so it can be stopped later.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   credentialEnv,
   envFilePath,
@@ -87,6 +87,36 @@ export function extractGuiUrl(chunk: string, port: number): string | undefined {
   return `http://127.0.0.1:${matchedPort}/?token=${match[2]}`;
 }
 
+/**
+ * Last tokenized GUI URL written to the logs of a harness.
+ *
+ * The DSH prints the URL once, when the process starts, and that token lives as
+ * long as the process does. The in-memory map is emptied by a window reload even
+ * though the harness keeps running, and a harness started by the CLI logs to
+ * `dsh.log` instead of the extension log, so the token is recovered from
+ * whichever log was written last. Without it the panel falls back to the bare
+ * port, which answers `401 dsh web authentication required`.
+ */
+export function guiUrlFromLogs(deckHome: string, entry: HarnessEntry): string | undefined {
+  const files = [harnessLogPath(deckHome, entry), join(deckHome, '.run', entry.name, 'dsh.log')];
+  let best: { url: string; mtime: number } | undefined;
+  for (const file of files) {
+    let raw: string;
+    let mtime: number;
+    try {
+      raw = readFileSync(file, 'utf8');
+      mtime = statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+    // Reversed so the newest line of the log wins over the older runs in it.
+    const url = extractGuiUrl(raw.split('\n').reverse().join('\n'), entry.port);
+    if (url === undefined) continue;
+    if (best === undefined || mtime > best.mtime) best = { url, mtime };
+  }
+  return best?.url;
+}
+
 /** Start, stop and inspect the harness processes of one deck home. */
 export class HarnessProcesses {
   private readonly children = new Map<string, ChildProcess>();
@@ -132,12 +162,20 @@ export class HarnessProcesses {
     const pid = child?.pid ?? readPidFile(harnessPidPath(this.deckHome, entry));
     const alive = pid !== undefined && processAlive(pid);
     const listening = await portListening(entry.port);
+    let url = this.url(entry);
+    if (listening && !this.urls.has(entry.name)) {
+      const recovered = guiUrlFromLogs(this.deckHome, entry);
+      if (recovered !== undefined) {
+        this.urls.set(entry.name, recovered);
+        url = recovered;
+      }
+    }
     return {
       entry,
       managed: this.startedByUs.has(entry.name) && alive,
       listening,
       ...(pid !== undefined && alive ? { pid } : {}),
-      url: this.url(entry),
+      url,
       tail: this.tail(entry),
     };
   }
