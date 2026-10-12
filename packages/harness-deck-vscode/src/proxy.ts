@@ -10,7 +10,8 @@
  * loopback origin that needs no authentication at all.
  *
  * The token rotates with every restart of the harness, so a `401` from upstream
- * re-reads the token from the log and mints a fresh cookie once per request.
+ * re-reads the token from the log and mints a fresh cookie once per request. The
+ * `Origin` is rewritten too: the DSH answers `403` to anything else.
  */
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect } from 'node:net';
@@ -49,6 +50,31 @@ export function stripFrameAncestors(value: string): string {
     .split(';')
     .filter((directive) => !directive.trim().toLowerCase().startsWith('frame-ancestors'))
     .join(';');
+}
+
+/**
+ * Headers the harness must see.
+ *
+ * The DSH answers `403 forbidden` to any request whose `Origin` is not its own
+ * authority, and inside the panel that origin is the proxy — so both `Origin` and
+ * `Referer` are rewritten to the harness ones, next to the cookie and the `Host`.
+ */
+function harnessHeaders(
+  entry: HarnessEntry,
+  cookie: string,
+  headers: Record<string, string | string[] | undefined>,
+): Record<string, string | string[] | undefined> {
+  const authority = `http://127.0.0.1:${entry.port}`;
+  const rewritten: Record<string, string | string[] | undefined> = {
+    ...headers,
+    cookie,
+    host: `127.0.0.1:${entry.port}`,
+  };
+  if (rewritten.origin !== undefined) rewritten.origin = authority;
+  if (typeof rewritten.referer === 'string') {
+    rewritten.referer = rewritten.referer.replace(/^https?:\/\/127\.0\.0\.1:\d+/, authority);
+  }
+  return rewritten;
 }
 
 /** Ask the DSH for the session cookie, using the token it printed at startup. */
@@ -136,7 +162,7 @@ export class HarnessProxy {
         port: entry.port,
         path: request.url ?? '/',
         method: request.method,
-        headers: { ...request.headers, cookie: state.cookie, host: `127.0.0.1:${entry.port}` },
+        headers: harnessHeaders(entry, state.cookie, request.headers),
       },
       (answer) => {
         // A GET has no body to replay, so only a GET is worth a second attempt
@@ -194,12 +220,16 @@ export class HarnessProxy {
         const key = request.rawHeaders[index] ?? '';
         const value = request.rawHeaders[index + 1] ?? '';
         const lower = key.toLowerCase();
-        if (lower === 'cookie' || lower === 'host' || lower === 'origin') continue;
+        if (lower === 'cookie' || lower === 'host' || lower === 'origin' || lower === 'referer') continue;
         lines.push(`${key}: ${value}`);
       }
       lines.push(`host: 127.0.0.1:${entry.port}`);
       lines.push(`origin: http://127.0.0.1:${entry.port}`);
       lines.push(`cookie: ${state.cookie}`);
+      const referer = request.headers.referer;
+      if (typeof referer === 'string') {
+        lines.push(`referer: ${referer.replace(/^https?:\/\/127\.0\.0\.1:\d+/, `http://127.0.0.1:${entry.port}`)}`);
+      }
       upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
       if (head.length > 0) upstream.write(head);
       upstream.pipe(socket);

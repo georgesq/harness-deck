@@ -50,6 +50,30 @@ function get(url) {
   });
 }
 
+/** POST a small JSON body and collect the answer. */
+function postJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ probe: true });
+    const request = httpRequest(
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), ...headers },
+      },
+      (answer) => {
+        let text = '';
+        answer.setEncoding('utf8');
+        answer.on('data', (chunk) => {
+          text += chunk;
+        });
+        answer.on('end', () => resolve({ status: answer.statusCode, body: text }));
+      },
+    );
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
 /** Status of a WebSocket handshake against one origin. */
 function upgradeStatus(baseUrl) {
   return new Promise((resolve) => {
@@ -153,6 +177,13 @@ const upstream = createServer((request, response) => {
     response.end();
     return;
   }
+  // O DSH responde 403 quando o Origin nao e a autoridade dele.
+  const origin = request.headers.origin;
+  if (origin !== undefined && origin !== `http://127.0.0.1:${upstream.address().port}`) {
+    response.writeHead(403, { 'content-type': 'text/plain' });
+    response.end('forbidden');
+    return;
+  }
   if ((request.headers.cookie ?? '').includes('dsh-auth-fake=')) {
     response.writeHead(200, {
       'content-type': 'text/html',
@@ -192,6 +223,8 @@ check('proxy entrega a GUI autenticada', answer.status === 200 && answer.body.in
 check('proxy tira o x-frame-options', answer.headers['x-frame-options'] === undefined);
 check('proxy tira o frame-ancestors', !(answer.headers['content-security-policy'] ?? '').includes('frame-ancestors'));
 check('porta crua continua 401', (await get(`http://127.0.0.1:${upstreamPort}/`)).status === 401);
+const post = await postJson(`${proxyUrl}/api/session/create`, { origin: proxyUrl, referer: `${proxyUrl}/` });
+check('proxy reescreve o Origin e o POST nao toma 403', post.status === 200, `status ${post.status} ${post.body.slice(0, 40)}`);
 check('websocket autenticado passa pelo proxy', (await upgradeStatus(proxyUrl)) === 101);
 check('websocket sem cookie e recusado', (await upgradeStatus(`http://127.0.0.1:${upstreamPort}`)) === 401);
 check('frame-ancestors sai da politica, o resto fica', stripFrameAncestors("default-src 'self'; frame-ancestors 'none'") === "default-src 'self'");
