@@ -65,6 +65,7 @@ import {
   type StreamChunk,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm';
+import { createScope, type Scope } from '@deepseek-ai/dsh-scope';
 import * as acp from '@agentclientprotocol/sdk';
 
 declare module '@deepseek-ai/cordis' {
@@ -212,14 +213,35 @@ class ClaudeCodeAgent implements Agent {
   readonly ctx: Context;
   status: AgentStatus = 'idle';
 
+  /**
+   * This Agent's own registration scope, minted here and keyed BY THIS
+   * INSTANCE.
+   *
+   * The key cannot be an arbitrary object: several DSH services resolve the
+   * Agent out of its scope, and they compare against the Agent itself. The
+   * file-upload service is the one that bit us —
+   * `assertAgentScope` (`dsh-client-file-upload/lib/index.js:297`) rejects
+   * anything whose `scopeOf(agent.ctx) !== agent`, and a rejected prompt
+   * reaches the user as `prompt rejected (session/agent-busy)`, which names
+   * neither the service nor the real cause. `dsh-agent-loop` mints its scope
+   * the same way, keyed by the driver instance
+   * (`dsh-agent-loop/lib/index.js:778`).
+   */
+  readonly scope: Scope;
+
   private idleWaiters: Array<() => void> = [];
   private wakeWaiters: Array<() => void> = [];
 
-  constructor(ctx: Context, session: Session, options: AgentOptions) {
-    this.ctx = ctx;
+  /**
+   * @param loopCtx - the engine plugin's own (live) context; the scope is
+   * minted under it, so the Agent inherits the engine's dependency API.
+   */
+  constructor(loopCtx: Context, session: Session, options: AgentOptions) {
     this.session = session;
     this.id = session.id;
     this.options = options;
+    this.scope = createScope(loopCtx, this);
+    this.ctx = this.scope.ctx;
     this.inbox = new SimpleInbox(() => this.wake());
   }
 
@@ -521,8 +543,28 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
       throw error;
     }
 
-    const agentCtx = ownerCtx.extend();
-    const agent = new ClaudeCodeAgent(agentCtx, session, options.agentOptions ?? {});
+    // The Agent must run on a *scoped* context, and the scope key must be the
+    // Agent itself — `ownerCtx.extend()` copies the context chain but not the
+    // scope tag, and an arbitrarily keyed scope fails the services that look
+    // the Agent up through its scope. Both mistakes are invisible until a real
+    // session runs: the first surfaces as "Agent preset binding requires a
+    // scoped context" while creating the session, the second as
+    // "prompt rejected (session/agent-busy)" while sending the first message.
+    // `dsh-agent-loop` builds driver and scope in the same order inside an
+    // effect on the owner (`lib/index.js:778` and `:1714`); this mirrors it.
+    const loopCtx = this.runtime.ctx;
+    let startedAgent: ClaudeCodeAgent | undefined;
+    ownerCtx.effect(function* () {
+      startedAgent = new ClaudeCodeAgent(loopCtx, session, options.agentOptions ?? {});
+      yield startedAgent.scope.rawDispose;
+    }, `claudeCodeAgentLoop.lifecycle(${options.sessionId})`);
+    if (startedAgent === undefined) {
+      detachSession();
+      throw new Error('claudeCodeAgentLoop: the Agent did not start');
+    }
+    // Bound once: TypeScript cannot see through the closure above.
+    const agent: ClaudeCodeAgent = startedAgent;
+    const agentScope = agent.scope;
 
     // Honor `options.setup`'s documented contract: run it on the unpublished
     // agent/session before `register()` publishes either, and apply its
@@ -531,10 +573,11 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     let setupCommit: { commit(): void } | undefined;
     if (options.setup !== undefined) {
       try {
-        const result = await options.setup(agentCtx, agent);
+        const result = await options.setup(agentScope.ctx, agent);
         if (result !== undefined) setupCommit = result;
       } catch (error) {
         detachSession();
+        await agentScope.dispose();
         throw error;
       }
     }
@@ -542,6 +585,7 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
       setupCommit?.commit();
     } catch (error) {
       detachSession();
+      await agentScope.dispose();
       throw error;
     }
 
@@ -570,6 +614,7 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
         await bridgeDone;
         await detachAgent?.();
         detachSession();
+        await agentScope.dispose();
       },
     };
   }
