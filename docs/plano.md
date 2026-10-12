@@ -1,7 +1,7 @@
 # Plano — harness-deck
 
 Acompanhamento do andamento. Status: ✅ feito · 🔄 em andamento · ⏳ a fazer · ⛔ bloqueado.
-Prazos são **estimativa**, não medição. Cada fase só começa quando o **portão** da anterior passa.
+Prazo: **não localizado** (nada medido ainda; medir com o custo real de tokens e tempo da F1). Cada fase só começa quando o **portão** da anterior passa.
 
 Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 - **REQ-01:** os harness registrados abrem juntos na mesma janela do VS Code.
@@ -16,7 +16,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 | 0.2 | Confirmar se o motor do agente é trocável por perfil (é por processo) | ✅ |
 | 0.3 | Perfil isolado em `~/.harnessdeck` sobe sem o motor padrão | ✅ |
 
-## F1 — Prova de conceito: Claude Code dentro da UI (2–3 dias)
+## F1 — Prova de conceito: Claude Code dentro da UI
 
 | # | Item | Status |
 |---|---|---|
@@ -29,7 +29,7 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 **Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada.
 Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 
-## F2 — Vários harness no VS Code (REQ-01, REQ-02) (1–2 semanas)
+## F2 — Vários harness no VS Code (REQ-01, REQ-02)
 
 | # | Item | Status |
 |---|---|---|
@@ -41,7 +41,7 @@ Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 
 **Portão F2:** dois harness na mesma janela, sem misturar workspaces, e o DSH da 3080 intacto.
 
-## F3 — Claude Code completo (1–2 semanas)
+## F3 — Claude Code completo
 
 | # | Item | Status |
 |---|---|---|
@@ -50,7 +50,7 @@ Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 | 3.3 | Título de sessão, compactação e goal com o motor do Claude Code | ⏳ |
 | 3.4 | Camada única para a API interna do DSH (troca de versão doer pouco) | ⏳ |
 
-## F4 — Paperclip na UI (1 semana)
+## F4 — Paperclip na UI
 
 | # | Item | Status |
 |---|---|---|
@@ -58,7 +58,7 @@ Se falhar, reavaliar a opção C (ponte ACP) antes de seguir.
 | 4.2 | Painel: tarefas, heartbeat e orçamento | ⏳ |
 | 4.3 | Instalar o Paperclip | ⏳ pede aval do dono |
 
-## F5 — Outros harness via ACP (2–3 semanas)
+## F5 — Outros harness via ACP
 
 | # | Item | Status |
 |---|---|---|
