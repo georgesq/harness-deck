@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { harnessHome, loadEnvFile, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
+import { catalogModelId, FAST_MODEL_SLUG, harnessHome, loadEnvFile, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
 import { materializeProfile, pathExists, profileDir, type MaterializeResult } from './materialize.ts';
 
 /** Name of the executable the launcher spawns. */
@@ -150,8 +150,21 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
   }
   if (entry.engine !== 'claude-code' || !entry.provider) return env;
   const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
-  env.ANTHROPIC_BASE_URL = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
+  const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
+  env.ANTHROPIC_BASE_URL = baseUrl;
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
+  // The CLI only accepts model ids its own catalog describes, and the provider
+  // only accepts its own slugs: the bridge maps one onto the other. Without
+  // this the harness dies on "There's an issue with the selected model".
+  if (entry.provider.model) {
+    const catalog = catalogModelId(entry.provider.model);
+    const fast = catalogModelId(FAST_MODEL_SLUG);
+    env.ANTHROPIC_MODEL = catalog;
+    env.ANTHROPIC_SMALL_FAST_MODEL = fast;
+    env.HARNESS_DECK_MODEL_MAP = JSON.stringify({ [catalog]: entry.provider.model, [fast]: FAST_MODEL_SLUG });
+    env.HARNESS_DECK_UPSTREAM_URL = baseUrl;
+    if (key) env.HARNESS_DECK_UPSTREAM_KEY = key;
+  }
   return env;
 }
 

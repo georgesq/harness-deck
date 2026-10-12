@@ -67,6 +67,24 @@ export const PROVIDER_BASE_URLS: Record<HarnessProvider['kind'], string> = {
   deepseek: 'https://api.deepseek.com/v1',
 };
 
+/**
+ * Cheap model the Claude Code CLI uses for background work (titles, summaries).
+ * Its own default is a Haiku id the provider does not serve.
+ */
+export const FAST_MODEL_SLUG = 'anthropic/claude-haiku-5.5';
+
+/**
+ * The catalog id the Claude Code CLI expects for a provider slug.
+ *
+ * The CLI refuses any model id this version's hardcoded catalog does not
+ * describe, so `anthropic/claude-sonnet-5.5` never leaves the machine. It gets
+ * `claude-sonnet-5-5` and the bridge maps it back to the slug.
+ */
+export function catalogModelId(slug: string): string {
+  const bare = slug.slice(slug.lastIndexOf('/') + 1);
+  return bare.replace(/\./g, '-');
+}
+
 /** Environment variable each provider kind reads by default. */
 export const PROVIDER_KEY_ENV: Record<HarnessProvider['kind'], string> = {
   openrouter: 'OPENROUTER_API_KEY',
