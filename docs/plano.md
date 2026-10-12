@@ -41,7 +41,7 @@ registro. O caminho certo é a API **pública** do `@deepseek-ai/dsh-session`
 
 | # | Item | Status |
 |---|---|---|
-| 1.3.a | Entender e documentar os `SessionEventType` mínimos para uma resposta de texto simples (sem ferramenta): o que o `dsh-agent-loop` emite por turno (`turn/start`, mensagem do usuário, `assistant/attempt`, fechamento) | ⏳ |
+| 1.3.a | Entender e documentar os `SessionEventType` mínimos para uma resposta de texto simples (sem ferramenta): o que o `dsh-agent-loop` emite por turno (`turn/start`, mensagem do usuário, `assistant/attempt`, fechamento) | ✅ [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md) |
 | 1.3.b | `createAgent` real: `ctx.sessions.prepare` → compor o `Agent` próprio → `enter` → `announce`, sem reusar classes privadas do `dsh-agent-loop` | ⏳ |
 | 1.3.c | Ligar o Claude Agent SDK: enviar o turno, consumir o stream do SDK, e append incremental de evento(s) de mensagem do assistente conforme chega | ⏳ |
 | 1.3.d | Teste manual: perfil isolado, uma pergunta simples, resposta aparece no chat da Web GUI em streaming | ⏳ |
