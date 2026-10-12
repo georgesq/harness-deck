@@ -51,6 +51,8 @@ import {
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
 import type { Session, SessionSeq, TurnEndReason } from '@deepseek-ai/dsh-session';
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
 import {
   AssistantStreamAccumulator,
   BlockAssembler,
@@ -125,6 +127,65 @@ async function acpChildEnv(): Promise<NodeJS.ProcessEnv> {
   const proxy = await ensureModelProxy();
   if (!proxy) return process.env;
   return { ...process.env, ANTHROPIC_BASE_URL: proxy.baseUrl };
+}
+
+/** The `model` config option the ACP agent advertises on every session. */
+const MODEL_CONFIG_ID = 'model';
+
+/**
+ * Point the ACP session at the model the DSH session selected.
+ *
+ * The DSH's own model selection and the Claude Code CLI's are two different
+ * things, and only the DSH side knows what the owner picked. Left alone, the
+ * CLI keeps its own default — and because the deck hands it a catalog id
+ * (`claude-sonnet-5-5`), the CLI resolves that id against its own catalog and
+ * can land on a different model than the selector shows. That is the whole of
+ * "it always opens Opus": the alias wins, the selection is decoration.
+ *
+ * The model is looked up in `HARNESS_DECK_MODEL_MAP`, which the launcher built
+ * from the registry, so a slug the registry does not offer is refused here
+ * rather than silently sent to a provider that would reject it.
+ *
+ * Failure is not fatal: a session whose model could not be pinned still runs on
+ * the CLI's default, and refusing the session would be worse than the drift.
+ * The reason is logged so the drift is visible instead of silent.
+ *
+ * @param ctx - ACP client context, for the `session/set_config_option` call.
+ * @param sessionId - the ACP session to configure.
+ * @param slug - provider slug from the DSH selection, when there is one.
+ */
+async function applySelectedModel(
+  ctx: acp.ClientContext,
+  sessionId: string,
+  slug: string | undefined,
+): Promise<void> {
+  if (slug === undefined) return;
+  const rawMap = process.env.HARNESS_DECK_MODEL_MAP;
+  if (!rawMap) return;
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(rawMap) as Record<string, string>;
+  } catch {
+    return;
+  }
+  const catalog = Object.entries(map).find(([, value]) => value === slug)?.[0];
+  if (catalog === undefined) {
+    process.stderr.write(
+      `[claude-code] model "${slug}" is not in the deck's model map; the session keeps the CLI default\n`,
+    );
+    return;
+  }
+  try {
+    await ctx.request(acp.methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: MODEL_CONFIG_ID,
+      value: catalog,
+    });
+  } catch (error) {
+    process.stderr.write(
+      `[claude-code] could not pin model "${slug}" (${catalog}): ${errorChain(error)}\n`,
+    );
+  }
 }
 
 /**
@@ -258,6 +319,19 @@ class ClaudeCodeAgent implements Agent {
     this.scope = createScope(loopCtx, this);
     this.ctx = this.scope.ctx;
     this.inbox = new SimpleInbox(() => this.wake());
+  }
+
+  /**
+   * Provider slug this agent must run on, from the DSH model selection.
+   *
+   * `AgentOptions.model` is the slug the registry advertises
+   * (`anthropic/claude-sonnet-5.5`), not the CLI's catalog id — the loopback
+   * gateway is what turns one into the other. `undefined` means "whatever the
+   * CLI was started with", which is the registry default.
+   */
+  get selectedModel(): string | undefined {
+    const model = this.options.model;
+    return typeof model === 'string' && model.trim() !== '' ? model.trim() : undefined;
   }
 
   cancel(_cause: unknown, options?: { keepInbox?: boolean }): void {
@@ -498,7 +572,7 @@ class LiveAssistantAttempt {
  * registration is automatically undone if this plugin unloads.
  */
 export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
-  static inject = ['agents', 'sessions'];
+  static inject = ['agents', 'sessions', 'approval'];
 
   private readonly config: ClaudeCodeAgentLoopConfig;
 
@@ -635,6 +709,60 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
   }
 
   /**
+   * Answer one ACP permission question with the DSH's own approval decision.
+   *
+   * The CLI asks before running a tool, and the client is who answers. Without
+   * this handler the ACP connection answers `Method not found:
+   * session/request_permission` and the tool never runs — observed on
+   * 12/10/2026 as a web search that silently never happened.
+   *
+   * The question is routed through the DSH's `approval` service rather than
+   * answered locally, so the GUI's approval panel is what decides, the ask and
+   * its outcome land in the session's audit log, and the sandbox/approval
+   * preset the owner picked keeps applying.
+   *
+   * Only `allowed-once` becomes a grant: `rejected`, `cancelled` and the
+   * fail-closed `unavailable` all map onto ACP's `cancelled` outcome, which is
+   * the protocol's way of saying "no option was chosen". A missing service is
+   * therefore a refusal, never a silent allow.
+   *
+   * @param agent - the agent on whose behalf the tool would run.
+   * @param request - the ACP permission request.
+   * @returns the ACP outcome for the asked options.
+   */
+  private async decidePermission(
+    agent: ClaudeCodeAgent,
+    request: acp.RequestPermissionRequest,
+  ): Promise<acp.RequestPermissionResponse> {
+    const approval = this.runtime.ctx.get('approval');
+    if (approval === undefined) {
+      process.stderr.write(
+        `[claude-code] no approval service; refusing "${request.toolCall.title ?? 'tool'}"\n`,
+      );
+      return { outcome: { outcome: 'cancelled' } };
+    }
+    let outcome: ApprovalOutcome;
+    try {
+      outcome = await approval.request({
+        agent,
+        toolName: request.toolCall.title ?? 'tool',
+        ...(request.toolCall.toolCallId === undefined ? {} : { callId: request.toolCall.toolCallId as ToolCallId }),
+      });
+    } catch (error) {
+      // An ask outside an open turn rejects by contract; refusing the tool is
+      // the correct reading of "we could not ask".
+      process.stderr.write(`[claude-code] approval ask failed: ${errorChain(error)}\n`);
+      return { outcome: { outcome: 'cancelled' } };
+    }
+    if (outcome !== 'allowed-once') return { outcome: { outcome: 'cancelled' } };
+    // Prefer the protocol's own "allow once" option so the CLI records a real
+    // grant; fall back to the first option it offered.
+    const allow = request.options.find((option) => option.kind === 'allow_once') ?? request.options[0];
+    if (allow === undefined) return { outcome: { outcome: 'cancelled' } };
+    return { outcome: { outcome: 'selected', optionId: allow.optionId } };
+  }
+
+  /**
    * Connect to the spawned ACP agent, open one session on it scoped to
    * `cwd`, and drive it from `agent`'s inbox: each pending `UserMessage`
    * becomes one ACP `prompt`, whose `session/update` notifications are
@@ -655,13 +783,25 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
     const session = agent.session;
 
-    await acp.client({ name: 'harness-deck-claude-code' }).connectWith(stream, async (ctx) => {
+    await acp
+      .client({ name: 'harness-deck-claude-code' })
+      .onRequest(acp.methods.client.session.requestPermission, (request) =>
+        this.decidePermission(agent, request.params),
+      )
+      .connectWith(stream, async (ctx) => {
       await ctx.request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
       });
 
       return ctx.buildSession(cwd).withSession(async (acpSession) => {
+        // The model the DSH session is running on, applied to the ACP session
+        // before the first prompt. Without this the CLI keeps its own
+        // `ANTHROPIC_MODEL` default and resolves a family alias on its own —
+        // observed on 12/10/2026 as `phase=set-model model=sonnet`, which the
+        // CLI answered by running Opus regardless of what the DSH selector
+        // showed.
+        await applySelectedModel(ctx, acpSession.sessionId, agent.selectedModel);
         let turn = 0;
         let attempt = 0;
         // One revision counter per agent lifecycle: the GUI's accumulator
