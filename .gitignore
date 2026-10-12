@@ -8,3 +8,8 @@ dist/
 # gh CLI token, created in-session because $HOME/.config was read-only
 .gh-config/
 .run/
+# Throwaway probe/smoke scripts and their logs (repo root)
+.run-*
+
+# Plugin build output: produced by `npm run build` in the package
+lib/
