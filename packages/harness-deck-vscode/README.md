@@ -13,6 +13,19 @@ code --install-extension dist/harness-deck-vscode-<versao>.vsix
 Depois de instalar, recarregue a janela do VS Code. O ícone **Harness Deck** aparece na barra de
 atividades, com a lista dos harnesses do registro.
 
+## Workspaces
+
+Cada harness tem a **sua** lista de pastas (uma `DSH_HOME` por harness), então a mesma pasta precisa
+ser registrada em cada um. A extensão faz isso sem terminal:
+
+- botão **`+` na barra da lista** — *Adicionar workspace em todos os harnesses* (pasta escolhida no
+  diálogo do sistema). É o caminho que evita o trabalho repetido;
+- botão **pasta no item do harness** — *Adicionar workspace neste harness*;
+- botão **lixeira na barra** — *Remover workspace* (escolhe entre os que existem).
+
+Se o harness estiver no ar, a lista dele vive em memória e a gravação seria perdida na próxima
+mudança feita na GUI: a extensão avisa e oferece **Parar, adicionar e subir**.
+
 Configuração (Settings → Harness Deck): `harnessDeck.home` (raiz de dados, vazio usa
 `$HARNESS_DECK_HOME` ou `~/.harnessdeck`), `harnessDeck.dshCommand` (padrão `dsh`, resolvido no
 PATH), `harnessDeck.autoStart`, `harnessDeck.stopOnExit` e `harnessDeck.openSystemBrowser`.

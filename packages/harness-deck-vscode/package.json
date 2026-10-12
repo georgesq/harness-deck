@@ -105,12 +105,37 @@
       {
         "command": "harnessDeck.showLog",
         "title": "Harness Deck: Ver log do harness"
+      },
+      {
+        "command": "harnessDeck.addWorkspace",
+        "title": "Harness Deck: Adicionar workspace neste harness",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "harnessDeck.addWorkspaceEverywhere",
+        "title": "Harness Deck: Adicionar workspace em todos os harnesses",
+        "icon": "$(add)"
+      },
+      {
+        "command": "harnessDeck.removeWorkspace",
+        "title": "Harness Deck: Remover workspace",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
       "view/title": [
         {
           "command": "harnessDeck.refresh",
+          "when": "view == harnessDeck.harnesses",
+          "group": "navigation"
+        },
+        {
+          "command": "harnessDeck.addWorkspaceEverywhere",
+          "when": "view == harnessDeck.harnesses",
+          "group": "navigation"
+        },
+        {
+          "command": "harnessDeck.removeWorkspace",
           "when": "view == harnessDeck.harnesses",
           "group": "navigation"
         }
@@ -135,6 +160,37 @@
           "command": "harnessDeck.restartHarness",
           "when": "view == harnessDeck.harnesses",
           "group": "inline"
+        },
+        {
+          "command": "harnessDeck.addWorkspace",
+          "when": "view == harnessDeck.harnesses",
+          "group": "inline"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "harnessDeck.openHarness",
+          "when": "false"
+        },
+        {
+          "command": "harnessDeck.startHarness",
+          "when": "false"
+        },
+        {
+          "command": "harnessDeck.stopHarness",
+          "when": "false"
+        },
+        {
+          "command": "harnessDeck.restartHarness",
+          "when": "false"
+        },
+        {
+          "command": "harnessDeck.openInBrowser",
+          "when": "false"
+        },
+        {
+          "command": "harnessDeck.showLog",
+          "when": "false"
         }
       ]
     }
