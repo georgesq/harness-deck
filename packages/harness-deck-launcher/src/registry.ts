@@ -101,7 +101,7 @@ export interface HarnessEntry {
   engine: HarnessEngine;
   /** Provider route written into the profile patch. */
   provider?: HarnessProvider;
-  /** Optional base URL of the model provider (Anthropic-shaped, e.g. the Avello endpoint). */
+  /** Optional base URL of the model provider (Anthropic-shaped, e.g. the OpenRouter endpoint). */
   providerBaseUrl?: string;
   /** Optional environment variable holding this harness' credential (never the value itself). */
   providerApiKeyEnv?: string;
