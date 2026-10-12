@@ -4,3 +4,7 @@
 
 node_modules/
 dist/
+
+# gh CLI token, created in-session because $HOME/.config was read-only
+.gh-config/
+.run/
