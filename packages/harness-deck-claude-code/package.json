@@ -1,6 +1,6 @@
 {
   "name": "harness-deck-claude-code",
-  "description": "harness-deck plugin: Claude Code engine for the DeepSeek Harness AgentFactory, implemented as an ACP bridge (items B.1-B.2 of docs/plano.md)",
+  "description": "harness-deck plugin: Claude Code engine for the DeepSeek Harness AgentFactory, implemented as an ACP bridge (items B.1-B.3 of docs/plano.md)",
   "version": "0.0.1",
   "private": true,
   "license": "MIT",
@@ -24,8 +24,9 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-llm": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.8.0",
@@ -34,8 +35,9 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
     "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
     "@types/node": "^22.10.0",
     "typescript": "^5.6.0"
   }
