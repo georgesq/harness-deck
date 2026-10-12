@@ -17,7 +17,7 @@
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { harnessProfileDir, PROVIDER_BASE_URLS, type HarnessEntry } from './registry.ts';
+import { harnessProfileDir, providerModels, PROVIDER_BASE_URLS, type HarnessEntry } from './registry.ts';
 /** Bundles every harness-deck web profile loads. */
 export const WEB_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] as const;
 
@@ -55,8 +55,20 @@ export function profileDir(home: string, entry: HarnessEntry): string {
  * file (`dsh-config-editor/lib/index.js`, which rewrites the row in place and
  * keeps everything else). Regenerating the file wholesale would silently undo
  * that choice on the next `up`, so the model row is the user's from the moment
- * it exists and the registry only seeds it. Every other row stays ours and is
- * refreshed from the registry.
+ * it exists and the registry only seeds it.
+ *
+ * The two owned rows are not equally owned, and treating them alike is a bug
+ * that hides the model list (found by running, 12/10/2026):
+ *
+ * - `agent-default-model` is **entirely** the harness'. Its `model` is what the
+ *   owner picked in the selector, so the row on disk wins outright.
+ * - `llm-pi-ai` is **half** ours. Its `models` array is the deck's settings —
+ *   the list the selector offers, which only changes when the registry changes
+ *   — so it is always regenerated. Anything else the DSH may have written into
+ *   that row (a credential reference, say) is carried over, because that part
+ *   belongs to the harness.
+ *
+ * Every other row stays ours and is refreshed from the registry.
  *
  * @param generated - the patch this registry entry produces.
  * @param existing - the patch currently on disk.
@@ -66,19 +78,23 @@ export function mergeProfilePatch(generated: string, existing: string): string {
   const generatedSplit = splitPatchBlocks(generated);
   const existingSplit = splitPatchBlocks(existing);
   const existingBlocks = indexPatchBlocks(existingSplit.blocks);
-  const keep = new Set<string>();
-  // Rows owned by the running harness: the user's model choice, and the route
-  // the model selector needs. Both come from the DSH side once the profile ran.
-  for (const id of ['agent-default-model', 'llm-pi-ai']) {
-    if (existingBlocks.has(id)) keep.add(id);
-  }
   const blocks: string[] = [];
   for (const block of generatedSplit.blocks) {
-    if (block.id !== undefined && keep.has(block.id)) {
-      blocks.push(existingBlocks.get(block.id)!);
-    } else {
+    const onDisk = block.id === undefined ? undefined : existingBlocks.get(block.id);
+    if (onDisk === undefined) {
       blocks.push(block.text);
+      continue;
     }
+    // The user's model choice survives; the offered list is ours.
+    if (block.id === 'agent-default-model') {
+      blocks.push(onDisk);
+      continue;
+    }
+    if (block.id === 'llm-pi-ai') {
+      blocks.push(mergeProviderRoute(block.text, onDisk));
+      continue;
+    }
+    blocks.push(block.text);
   }
   // Rows the DSH added that this generator does not know about.
   for (const [id, text] of existingBlocks) {
@@ -96,6 +112,109 @@ function indexPatchBlocks(blocks: PatchBlock[]): Map<string, string> {
     if (block.id !== undefined) index.set(block.id, block.text);
   }
   return index;
+}
+
+/**
+ * Merge the `llm-pi-ai` row: our model list, the harness' everything else.
+ *
+ * The row is a nested YAML document, and only the `models:` list is the deck's
+ * to own. The list is replaced wholesale (it is settings, and the DSH replaces
+ * it wholesale too), while keys the DSH may have added to the same route — a
+ * credential reference, a retry policy — are carried over from disk. A route
+ * the harness added for another provider is kept as well, since this generator
+ * only ever writes the one provider of the registry entry.
+ *
+ * The list is located by indentation rather than by parsing YAML: the shape is
+ * the one this generator writes, and pulling in a parser for one row would put
+ * a dependency in the launcher's path for a file it already generates by hand.
+ *
+ * @param generated - the row this registry entry produces.
+ * @param onDisk - the row currently in the profile.
+ * @returns the merged row.
+ */
+export function mergeProviderRoute(generated: string, onDisk: string): string {
+  const generatedModels = extractModelsList(generated);
+  const diskModels = extractModelsList(onDisk);
+  if (generatedModels === undefined || diskModels === undefined) return onDisk;
+  // The generated row already carries our keys (`apiKeyEnv`, `api`, `baseURL`)
+  // and our list. Only keys the harness added on disk are appended, right
+  // before the list, so they sit under the same provider route.
+  const extras = routeExtras(onDisk, diskModels);
+  if (extras.length === 0) return generated;
+  const lines = generated.split('\n');
+  return [
+    ...lines.slice(0, generatedModels.start),
+    ...extras,
+    ...lines.slice(generatedModels.start),
+  ].join('\n');
+}
+
+/** The `models:` list of a provider route row, with the lines it spans. */
+interface ModelsList {
+  /** Index of the `models:` line. */
+  start: number;
+  /** Index one past the last line belonging to the list. */
+  end: number;
+  /** The list's lines, joined. */
+  text: string;
+}
+
+/**
+ * Locate the `models:` list inside a route row.
+ *
+ * @param block - the `llm-pi-ai` row text.
+ * @returns the list and its span, or undefined when the row has no list.
+ */
+function extractModelsList(block: string): ModelsList | undefined {
+  const lines = block.split('\n');
+  const start = lines.findIndex((line) => /^\s+models:\s*$/.test(line));
+  if (start < 0) return undefined;
+  const indent = lines[start]!.search(/\S/);
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end]!;
+    if (line.trim() === '') break;
+    const lineIndent = line.search(/\S/);
+    // A list item sits deeper than `models:`; anything at or above it ends the
+    // list (the next route key, or the next provider).
+    if (lineIndent <= indent) break;
+    end += 1;
+  }
+  return { start, end, text: lines.slice(start, end).join('\n') };
+}
+
+/**
+ * Route keys the harness owns, to re-apply under the generated route.
+ *
+ * Only the keys that sit beside `apiKeyEnv` — that is, the direct children of
+ * the provider route — are considered. Everything above them (`id`, `name`,
+ * `config`, `providers`, the provider name) is structure this generator owns,
+ * and treating it as an "extra" would splice the row into itself on the second
+ * merge. Returned as raw lines so a nested key keeps its own indentation.
+ */
+function routeExtras(onDisk: string, diskModels: ModelsList): string[] {
+  const ours = new Set(['apiKeyEnv', 'api', 'baseURL']);
+  const lines = onDisk.split('\n');
+  const withoutModels = [...lines.slice(0, diskModels.start), ...lines.slice(diskModels.end)];
+  // The provider's own key sits one level above the route keys; `models:` and
+  // `apiKeyEnv` share the same indentation, so that is the level to match.
+  const routeIndent = lines[diskModels.start]!.search(/\S/);
+  const extras: string[] = [];
+  for (let index = 0; index < withoutModels.length; index += 1) {
+    const line = withoutModels[index]!;
+    if (line.search(/\S/) !== routeIndent) continue;
+    const key = /^\s+([A-Za-z_][A-Za-z0-9_]*):/.exec(line)?.[1];
+    if (key === undefined || ours.has(key)) continue;
+    // A key with a nested block carries its children along.
+    extras.push(line);
+    while (index + 1 < withoutModels.length) {
+      const next = withoutModels[index + 1]!;
+      if (next.trim() === '' || next.search(/\S/) <= routeIndent) break;
+      index += 1;
+      extras.push(withoutModels[index]!);
+    }
+  }
+  return extras;
 }
 
 /** One row of a profile patch: its plugin id, when it has one, and its text. */
@@ -199,6 +318,18 @@ export function profilePatchYml(entry: HarnessEntry): string {
   }
   if (entry.provider) {
     const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
+    const provider = entry.provider;
+    // Every offered model is registered, not just the default: the DSH model
+    // selector is built from `llm.listModels()` (`dsh-api-session-controller`,
+    // `buildModelCatalog`), so a provider that advertises one model offers
+    // exactly one choice. The owner decided on 12/10/2026 that this list is
+    // the harness' settings, not the CLI's own built-in catalog.
+    const modelRows = providerModels(provider).flatMap((slug) => [
+      `          - id: ${slug}`,
+      `            name: ${provider.kind}/${slug.split('/').at(-1) ?? slug}`,
+      '            contextWindow: 1048576',
+      '            maxTokens: 262144',
+    ]);
     lines.push(
       entry.engine === 'claude-code'
         ? '# Provider route. The bridge hands the model call to claude-agent-acp, but the\n# DSH still requires a registered route for the model selector and the session\n# controller to boot.'
@@ -206,22 +337,19 @@ export function profilePatchYml(entry: HarnessEntry): string {
       '- id: agent-default-model',
       '  name: "@deepseek-ai/dsh-agent-default-model"',
       '  config:',
-      `    provider: ${entry.provider.kind}`,
-      `    model: ${entry.provider.model}`,
+      `    provider: ${provider.kind}`,
+      `    model: ${provider.model}`,
       '',
       '- id: llm-pi-ai',
       '  name: "@deepseek-ai/dsh-llm-pi-ai"',
       '  config:',
       '    providers:',
-      `      ${entry.provider.kind}:`,
-      `        apiKeyEnv: ${entry.provider.apiKeyEnv}`,
+      `      ${provider.kind}:`,
+      `        apiKeyEnv: ${provider.apiKeyEnv}`,
       '        api: openai-completions',
       `        baseURL: ${baseUrl}`,
       '        models:',
-      `          - id: ${entry.provider.model}`,
-      `            name: ${entry.provider.kind}/${entry.provider.model.split('/').at(-1) ?? entry.provider.model}`,
-      '            contextWindow: 1048576',
-      '            maxTokens: 262144',
+      ...modelRows,
       '',
     );
   }

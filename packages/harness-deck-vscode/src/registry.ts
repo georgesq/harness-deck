@@ -17,7 +17,14 @@ export type HarnessEngine = 'dsh' | 'claude-code';
 /** Provider route of a harness. */
 export interface HarnessProvider {
   kind: 'openrouter' | 'deepseek';
+  /** Model the harness starts on, as the provider names it. */
   model: string;
+  /**
+   * Every model the DSH model selector offers, default model first. Absent
+   * means "only {@link model}", which is what a registry written before the
+   * field existed means.
+   */
+  models?: string[];
   apiKeyEnv: string;
   baseUrl?: string;
 }
@@ -201,13 +208,15 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
   // The CLI only accepts model ids its own catalog describes, and the provider
   // only accepts its own slugs: the bridge maps one onto the other. Without
-  // this the harness dies on "There's an issue with the selected model".
+  // this the harness dies on "There's an issue with the selected model". The
+  // map carries *every* offered model, because a mapped run can land on any of
+  // them once the DSH model selector switches the session.
   if (entry.provider.model) {
     const catalog = catalogModelId(entry.provider.model);
     const fast = catalogModelId(FAST_MODEL_SLUG);
     env.ANTHROPIC_MODEL = catalog;
     env.ANTHROPIC_SMALL_FAST_MODEL = fast;
-    env.HARNESS_DECK_MODEL_MAP = JSON.stringify({ [catalog]: entry.provider.model, [fast]: FAST_MODEL_SLUG });
+    env.HARNESS_DECK_MODEL_MAP = JSON.stringify(modelMap(entry.provider));
     env.HARNESS_DECK_UPSTREAM_URL = baseUrl;
     if (key) env.HARNESS_DECK_UPSTREAM_KEY = key;
   }
@@ -236,4 +245,40 @@ export const FAST_MODEL_SLUG = 'anthropic/claude-haiku-5.5';
 export function catalogModelId(slug: string): string {
   const bare = slug.slice(slug.lastIndexOf('/') + 1);
   return bare.replace(/\./g, '-');
+}
+
+/**
+ * Every model a provider block offers, default first, without duplicates.
+ *
+ * Mirrors `harness-deck-launcher`'s helper of the same name: the extension
+ * host cannot import the launcher's TypeScript sources, and this is the one
+ * rule both sides must agree on, so it is duplicated deliberately.
+ */
+export function providerModels(provider: HarnessProvider | undefined): string[] {
+  if (!provider) return [];
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const slug of [provider.model, ...(provider.models ?? [])]) {
+    const trimmed = slug?.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
+  return ordered;
+}
+
+/**
+ * The catalog-id ↔ provider-slug map the Claude Code CLI needs.
+ *
+ * Mirrors `harness-deck-launcher`'s `modelMap`: one entry per offered model,
+ * plus the cheap background model.
+ */
+export function modelMap(provider: HarnessProvider | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const slug of providerModels(provider)) {
+    map[catalogModelId(slug)] = slug;
+  }
+  const fast = catalogModelId(FAST_MODEL_SLUG);
+  if (!(fast in map)) map[fast] = FAST_MODEL_SLUG;
+  return map;
 }

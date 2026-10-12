@@ -141,7 +141,7 @@ const HELP = `harness-deck — registro e lançador de harness
 Uso:
   harness-deck list [--json]
   harness-deck add <nome> [--engine dsh|claude-code] [--port <porta>]
-                          [--provider openrouter|deepseek] [--model <id>]
+                          [--provider openrouter|deepseek] [--model <id>]...
                           [--key-env <VAR>] [--base-url <url>] [--note <texto>]
                           [--dsh-home <dir>] [--force]
   harness-deck rm <nome> [--purge]
@@ -158,6 +158,10 @@ Flags globais:
   --home <dir>   raiz do harness-deck (padrão: $${HARNESS_DECK_HOME_ENV} ou ${DEFAULT_HARNESS_DECK_HOME})
   --json         saída em JSON (list, status)
   --plugin <dir> caminho do pacote harness-deck-claude-code
+
+--model pode ser repetido: a lista inteira é o que o seletor de modelo do DSH
+mostra dentro do harness, e o primeiro --model é o modelo inicial. Com um só
+--model (ou nenhum) o harness oferece apenas esse modelo.
 
 Cada harness é um perfil do DSH, um processo, uma porta e um DSH_HOME próprio
 (<raiz>/homes/<nome>). É o DSH_HOME que separa workspaces e sessões (REQ-02);
@@ -254,9 +258,15 @@ function buildProvider(options: Options): HarnessProvider {
   const model = flag(options, 'model') ?? DEFAULT_PROVIDER.model;
   const apiKeyEnv = flag(options, 'key-env') ?? PROVIDER_KEY_ENV[kind];
   const baseUrl = flag(options, 'base-url');
+  // `--model` repeated builds the list the DSH model selector offers; the
+  // first one is also the harness' starting model. A single `--model` (or
+  // none) leaves `models` absent, which means "only this one".
+  const models = options.flags.get('model') ?? [];
+  const offered = models.length > 1 ? models : [];
   return {
     kind,
     model,
+    ...(offered.length > 0 ? { models: offered } : {}),
     apiKeyEnv,
     ...(baseUrl ? { baseUrl } : {}),
   };

@@ -53,8 +53,25 @@ export type HarnessEngine = 'dsh' | 'claude-code';
 export interface HarnessProvider {
   /** Route kind. `openrouter` is the OpenAI-compatible one used in the B.3 test. */
   kind: 'openrouter' | 'deepseek';
-  /** Model id as the provider names it (e.g. `deepseek/deepseek-v4.1-flash`). */
+  /**
+   * Model the harness starts on, as the provider names it
+   * (e.g. `anthropic/claude-sonnet-5.5`).
+   *
+   * This is the *default*, not the only choice: {@link models} is what the
+   * DSH model selector offers. Kept as its own field because it is also the
+   * harness' initial selection and the value older registries carry alone.
+   */
   model: string;
+  /**
+   * Every model the DSH model selector offers for this provider, as the
+   * provider names them.
+   *
+   * The owner decided on 12/10/2026 that this list is the harness' own
+   * settings — the deck is the source of truth, not the CLI's built-in
+   * catalog. A missing list means "only {@link model}", so a registry written
+   * before this field existed keeps working unchanged.
+   */
+  models?: string[];
   /** Environment variable holding the key. Never the key itself. */
   apiKeyEnv: string;
   /** Base URL; defaults to the well-known one for the kind. */
@@ -83,6 +100,51 @@ export const FAST_MODEL_SLUG = 'anthropic/claude-haiku-5.5';
 export function catalogModelId(slug: string): string {
   const bare = slug.slice(slug.lastIndexOf('/') + 1);
   return bare.replace(/\./g, '-');
+}
+
+/**
+ * Every model a provider block offers, default first, without duplicates.
+ *
+ * The list is the harness' own settings (owner's decision of 12/10/2026), so
+ * the registry is what the DSH model selector shows. A block without
+ * {@link HarnessProvider.models} yields exactly its {@link HarnessProvider.model},
+ * which is how a registry written before that field existed keeps behaving.
+ *
+ * @param provider - the provider block of one harness.
+ * @returns provider slugs in selector order; empty when the block has no model.
+ */
+export function providerModels(provider: HarnessProvider | undefined): string[] {
+  if (!provider) return [];
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const slug of [provider.model, ...(provider.models ?? [])]) {
+    const trimmed = slug?.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
+  return ordered;
+}
+
+/**
+ * The catalog-id ↔ provider-slug map the Claude Code CLI needs.
+ *
+ * The CLI refuses any model id its own hardcoded catalog does not describe, so
+ * `anthropic/claude-sonnet-5.5` never reaches the wire. It is handed a catalog
+ * id (`claude-sonnet-5-5`) instead, and the loopback gateway maps it back to
+ * the slug. One entry per offered model, plus the cheap background model.
+ *
+ * @param provider - the provider block of one harness.
+ * @returns catalog id to provider slug; empty when the block has no model.
+ */
+export function modelMap(provider: HarnessProvider | undefined): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const slug of providerModels(provider)) {
+    map[catalogModelId(slug)] = slug;
+  }
+  const fast = catalogModelId(FAST_MODEL_SLUG);
+  if (!(fast in map)) map[fast] = FAST_MODEL_SLUG;
+  return map;
 }
 
 /** Environment variable each provider kind reads by default. */
@@ -329,14 +391,41 @@ export function normalizeProvider(value: unknown, where: string): { provider: Ha
   const apiKeyEnv = typeof candidate.apiKeyEnv === 'string' && candidate.apiKeyEnv.trim() !== ''
     ? candidate.apiKeyEnv.trim()
     : PROVIDER_KEY_ENV[kind];
+  const models = normalizeModels(candidate.models, `${where}: provider.models`);
   return {
     provider: {
       kind,
       model: candidate.model.trim(),
+      ...(models === undefined ? {} : { models }),
       apiKeyEnv,
       ...(candidate.baseUrl ? { baseUrl: candidate.baseUrl } : {}),
     },
   };
+}
+
+/**
+ * Validate the optional `provider.models` list.
+ *
+ * Absent means "only `provider.model`" and stays absent, so the registry keeps
+ * the shape it had before the field existed. A present-but-empty list is a
+ * mistake worth reporting rather than a silent fallback.
+ */
+function normalizeModels(value: unknown, where: string): string[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new RegistryError(`${where} must be an array of model ids`);
+  const models: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new RegistryError(`${where}[${index}] must be a non-empty string`);
+    }
+    const slug = entry.trim();
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    models.push(slug);
+  }
+  if (models.length === 0) throw new RegistryError(`${where} must not be empty (drop the field to offer only provider.model)`);
+  return models;
 }
 
 /** Find one harness by name; returns undefined when absent. */

@@ -13,7 +13,7 @@ import { spawn } from 'node:child_process';
 import { connect } from 'node:net';
 import { mkdir, open, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { catalogModelId, FAST_MODEL_SLUG, harnessHome, loadEnvFile, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
+import { catalogModelId, FAST_MODEL_SLUG, harnessHome, loadEnvFile, modelMap, PROVIDER_BASE_URLS, runtimeDir, type HarnessEntry, type Registry } from './registry.ts';
 import { materializeProfile, pathExists, profileDir, type MaterializeResult } from './materialize.ts';
 
 /** Name of the executable the launcher spawns. */
@@ -155,13 +155,15 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
   if (key) env.ANTHROPIC_AUTH_TOKEN = key;
   // The CLI only accepts model ids its own catalog describes, and the provider
   // only accepts its own slugs: the bridge maps one onto the other. Without
-  // this the harness dies on "There's an issue with the selected model".
+  // this the harness dies on "There's an issue with the selected model". The
+  // map carries *every* offered model, because a mapped run can land on any of
+  // them once the DSH model selector switches the session.
   if (entry.provider.model) {
     const catalog = catalogModelId(entry.provider.model);
     const fast = catalogModelId(FAST_MODEL_SLUG);
     env.ANTHROPIC_MODEL = catalog;
     env.ANTHROPIC_SMALL_FAST_MODEL = fast;
-    env.HARNESS_DECK_MODEL_MAP = JSON.stringify({ [catalog]: entry.provider.model, [fast]: FAST_MODEL_SLUG });
+    env.HARNESS_DECK_MODEL_MAP = JSON.stringify(modelMap(entry.provider));
     env.HARNESS_DECK_UPSTREAM_URL = baseUrl;
     if (key) env.HARNESS_DECK_UPSTREAM_KEY = key;
   }
