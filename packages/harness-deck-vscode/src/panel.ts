@@ -6,7 +6,7 @@
  * the engine and a reload button. Everything else — workspaces, sessions, chat —
  * belongs to the harness, which is exactly the isolation REQ-02 asks for.
  */
-import { ViewColumn, window, type Disposable, type WebviewPanel } from 'vscode';
+import { Uri, ViewColumn, env, window, type Disposable, type WebviewPanel } from 'vscode';
 import type { HarnessEntry } from './registry';
 import type { HarnessState } from './processes';
 
@@ -18,6 +18,9 @@ const panels = new Map<string, WebviewPanel>();
 
 /** Signature of the state each open panel was last rendered with. */
 const rendered = new Map<string, string>();
+
+/** Last state each open panel was rendered with, for its own messages. */
+const states = new Map<string, HarnessState>();
 
 /** Nonce for the panel's own inline script. */
 function nonce(): string {
@@ -48,6 +51,10 @@ function escapeHtml(value: string): string {
 export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, scriptNonce: string): string {
   const origin = `http://127.0.0.1:${entry.port}`;
   const status = state.listening ? 'no ar' : 'parado';
+  // Without the token the GUI answers `401 dsh web authentication required`, and
+  // the token is only known once the process printed it — so the bar says which
+  // of the two URLs the iframe is loading.
+  const token = state.url.includes('token=') ? 'sim' : 'nao';
   const detail = state.listening
     ? `${origin} · ${entry.engine}`
     : `o harness nao esta respondendo em ${origin} — veja o log pelo menu do Harness Deck`;
@@ -66,8 +73,9 @@ export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, script
     border-bottom: 1px solid var(--vscode-panel-border);
   }
   #name { color: var(--vscode-foreground); font-weight: 600; }
-  #reload { margin-left: auto; cursor: pointer; border: none; background: transparent;
+  #open, #reload { cursor: pointer; border: none; background: transparent;
     color: var(--vscode-textLink-foreground); font-size: 12px; }
+  #reload { margin-left: auto; }
   #frame { width: 100%; height: calc(100% - 26px); border: 0; }
   #offline { padding: 16px; font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
 </style>
@@ -78,17 +86,22 @@ export function renderPanelHtml(entry: HarnessEntry, state: HarnessState, script
   <span>${escapeHtml(entry.engine)}</span>
   <span>${escapeHtml(status)}</span>
   <span>${escapeHtml(detail)}</span>
+  <span id="token">token: ${token}</span>
+  <button id="open">abrir no navegador</button>
   <button id="reload">recarregar</button>
 </div>
 ${state.listening
   ? `<iframe id="frame" src="${escapeHtml(state.url)}" allow="clipboard-read; clipboard-write"></iframe>`
   : '<div id="offline">Nada respondendo nesta porta. Suba o harness pelo Harness Deck e recarregue.</div>'}
 <script nonce="${scriptNonce}">
+  const vscode = acquireVsCodeApi();
   const reload = document.getElementById('reload');
   reload?.addEventListener('click', () => {
     const frame = document.getElementById('frame');
     if (frame) frame.src = frame.src;
   });
+  const open = document.getElementById('open');
+  open?.addEventListener('click', () => vscode.postMessage({ type: 'openExternal' }));
 </script>
 </body>
 </html>`;
@@ -146,10 +159,19 @@ export function openHarnessPanel(
   );
   panels.set(entry.name, panel);
   rendered.set(entry.name, panelSignature(state));
+  states.set(entry.name, state);
   panel.webview.html = renderPanelHtml(entry, state, nonce());
+  // The iframe is cross-site to this webview, so the DSH cookie (`SameSite=Strict`)
+  // never lands in it: the browser is the path that always authenticates.
+  panel.webview.onDidReceiveMessage((message: unknown) => {
+    if ((message as { type?: string } | undefined)?.type !== 'openExternal') return;
+    const current = states.get(entry.name);
+    if (current !== undefined) void env.openExternal(Uri.parse(current.url));
+  });
   panel.onDidDispose(() => {
     panels.delete(entry.name);
     rendered.delete(entry.name);
+    states.delete(entry.name);
     onDispose?.(entry.name);
   });
   return { panel, existing: false };
@@ -168,6 +190,7 @@ export function updateHarnessPanel(entry: HarnessEntry, state: HarnessState): vo
   const signature = panelSignature(state);
   if (rendered.get(entry.name) === signature) return;
   rendered.set(entry.name, signature);
+  states.set(entry.name, state);
   panel.webview.html = renderPanelHtml(entry, state, nonce());
 }
 

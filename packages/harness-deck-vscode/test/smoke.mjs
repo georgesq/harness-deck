@@ -64,6 +64,7 @@ if (first !== undefined) {
   );
   check('painel no ar tem iframe com o token', running.includes(`http://127.0.0.1:${first.port}/?token=abc`));
   check('painel no ar libera a origem no CSP', running.includes(`frame-src http://127.0.0.1:${first.port};`));
+  check('painel no ar diz que o token esta no iframe', running.includes('token: sim'));
 
   const stopped = renderPanelHtml(
     first,
@@ -72,6 +73,7 @@ if (first !== undefined) {
   );
   check('painel parado nao tem iframe', !stopped.includes('<iframe'));
   check('painel parado explica a porta', stopped.includes(`nao esta respondendo em http://127.0.0.1:${first.port}`));
+  check('painel sem token avisa', stopped.includes('token: nao'));
 
   check('log fica na raiz do deck', harnessLogPath(deckHome, first).startsWith(join(deckHome, '.run')));
 
