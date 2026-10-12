@@ -193,6 +193,8 @@ export async function startHarness(home: string, entry: HarnessEntry, options: S
 
   const dshHome = harnessHome(home, entry);
   await mkdir(dshHome, { recursive: true });
+  // `dsh --profile <name>` boots the profile; everything after the launcher's own
+  // flags reaches the app, so `--port` and `--no-open` are the web app's.
   const args = ['--profile', entry.profile, '--port', String(entry.port), '--no-open'];
   const child = spawn(DSH_BIN, args, {
     cwd: profileDir(home, entry),
