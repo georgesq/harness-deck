@@ -3,9 +3,54 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 15:05 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 15:20 (America/Sao_Paulo)
 
 ## Agora
+
+- [x] **Autorizações do dono em 12/10/2026:** (1) escrever a raiz de dados real em
+  `~/.harnessdeck`; (2) entrar no item 2.4 (painel do VS Code).
+- [x] **Raiz real em uso.** O registro saiu do diretório de teste e vive em
+  `/home/georgesq/.harnessdeck/harnesses.json` com dois harnesses: `dsh` (motor padrão, porta 3130) e
+  `claude` (ponte ACP, porta 3131). **Verificado rodando, na raiz real:** os dois subiram com
+  `harness-deck up`, responderam `HTTP 401` na porta (servidor no ar, autenticação exigida) e pararam
+  com SIGTERM. Cada um com o seu `DSH_HOME` (`homes/dsh`, `homes/claude`).
+- [x] **Ordem de argumentos do DSH (defeito de produto corrigido).** O comando certo é
+  `dsh --profile <nome> --port <n> --no-open`: o lançador do DSH para de ler no primeiro token que
+  não reconhece e repassa o resto ao app. Com `web` no meio (`dsh web --profile <nome>`) o próprio app
+  recusa com `select a profile only once`, e o processo morria sem escrever nada no log — o harness
+  aparecia como "subindo" para sempre. O log do launcher passou a registrar a linha de comando, que é
+  o que tornou o defeito visível.
+- [x] **Item 2.4 iniciado: painel do VS Code.** `packages/harness-deck-vscode` (implementação própria,
+  não fork) abre **uma aba por harness** na mesma janela. Compila limpo e passa em teste sem VS Code
+  (`node test/smoke.mjs`). Falta empacotar o `.vsix` e instalar.
+
+## Por que implementação própria e não fork (item 2.4)
+
+A extensão instalada (`vithrive.deepseek-harness-vscode` 1.0.0, MIT) é um singleton de verdade: 20
+campos `let` de módulo no topo do arquivo (`extension.js:10-47`), `managedChild` único,
+`registerWebviewViewProvider(VIEW_ID)` com id fixo (`:3919`), painel de aba com id fixo `'dsh.tab'`
+(`:3933`) reusando 100% do estado global, `killOnDispose` só num `deactivate` que mata **um** filho
+(`:4131-4134`). **Contribution point de view do VS Code é estático** — não existe registro de view em
+tempo de execução —, então N harnesses na barra lateral exigiriam N views declaradas no manifesto e
+um `registerWebviewViewProvider` por view. Já o **painel de aba** (`WebviewPanel`) é dinâmico por
+natureza: a extensão abre quantas abas quiser, uma por harness, sem teto de manifesto.
+
+Mapa completo do código de referência, com linha citada por afirmação:
+[mapa-cirurgia-extension-vscode.md](mapa-cirurgia-extension-vscode.md).
+
+**Limitação do DSH, não do VS Code:** o próprio readme da extensão (`readme.md:263`) registra que o
+front-end do DSH **degenera para singleton com múltiplos webviews** no VS Code (no navegador comum,
+múltiplas abas funcionam). Ou seja: N harnesses **distintos** (DSH + Claude Code/ACP) convivem; N
+instâncias **do mesmo front-end DSH** não convivem sem mexer no front-end dele. Isso não bloqueia o
+F2 (o alvo é DSH + Claude Code), mas fecha a porta para "dois DSH lado a lado" por ora.
+
+## O que o painel do VS Code faz e o que não faz
+
+- Lê o mesmo registro do CLI (`harnesses.json`), lista os harnesses com motor, porta e estado, sobe o
+  que estiver parado com o `DSH_HOME` próprio, dá uma aba por harness com a GUI embutida (URL com
+  token, `frame-src` liberado no CSP), para, reinicia, abre no navegador e mostra o log.
+- **Não** escreve o registro nem materializa perfil (isso é do CLI), **não** toca em `~/.dsh`, **não**
+  registra o DSH como modelo de chat do Copilot e **não** abre view por harness na barra lateral.
 
 - [x] **Item 2.1 — completo: registro de harnesses + lançador (`harness-deck`).** Pacote novo
   [packages/harness-deck-launcher](../packages/harness-deck-launcher/) com registro em JSON
@@ -168,30 +213,30 @@ gancho de pausa (`FAKE_HOLD_MS`) para o teste de abandono descrito acima.
   responde, o `claude-agent-acp` não falha: ele fica retentando e o turno abre e nunca fecha. Isso é
   comportamento do Claude Code, não da ponte — mas significa que **timeout de provedor não é
   detectado** por nós. Anotado como item de B.4/B.5 (o cancelamento de verdade também está lá).
-- **Pendência de ambiente (não do produto):** o script de teste usa um `DSH_HOME` dentro do
-  repositório (`.run/dsh-home`, fora do git) porque o sandbox não deixa escrever em
-  `~/.harnessdeck`.
+- **Pendência de ambiente resolvida em 12/10/2026:** o dono autorizou a escrita em
+  `~/.harnessdeck`, e a raiz real passou a ser usada nos testes (registro, perfis e `homes/`).
 - **O sandbox mata processo destacado.** Cada comando do sandbox roda com `bwrap --die-with-parent`,
   então um harness que o `up` sobe **morre quando o comando que o subiu termina**. O ciclo completo
   (`up` → portas no ar → `down`) foi verificado dentro de **um único comando**; numa máquina sem esse
-  sandbox o processo destacado sobrevive normalmente. Não é defeito do lançador.
+  sandbox o processo destacado sobrevive normalmente. Não é defeito do lançador. **É também a razão
+  de o teste do painel do VS Code não ter sido feito ainda**: a extensão vive dentro do VS Code, que
+  está fora do sandbox.
 
-**Resolvidos desde a última atualização** (as duas afirmações antigas estavam erradas): `tsc` **roda**
-e passa limpo, e o `claude-agent-acp` **está instalado** (`0.89.1`) como dependência do plugin.
+**Resolvidos desde a última atualização:** `tsc` **roda** e passa limpo; o `claude-agent-acp` **está
+instalado** (`0.89.1`) como dependência do plugin; a raiz real está em uso; o painel do VS Code existe
+e compila.
 
 ## Próxima decisão do dono
 
-- **Aval pedido: raiz de dados em `~/.harnessdeck`.** O lançador está pronto para rodar contra a raiz
-  real, mas o sandbox da sessão bloqueia escrita fora do repositório. Para o dono usar de verdade
-  (`harness-deck add … && harness-deck up`) é preciso liberar a escrita em `~/.harnessdeck` — ou rodar
-  o comando fora do sandbox.
-- **Aval pedido: a extensão do VS Code (item 2.4).** Veredito da investigação: a extensão instalada
-  (`vithrive.deepseek-harness-vscode` 1.0.0) é um **singleton de 4186 linhas** — uma `activeView`,
-  um `managedChild`, um proxy de auth, `VIEW_ID` fixo. N harnesses exigem N views declaradas, e
-  container não se registra em tempo de execução: **não há caminho sem fork**. O menor fork são 6
-  itens concretos (manifest com `dshPanel.harnesses[]`, estado por harness, proxy por URL, processo
-  por porta, comandos por view, provedor de LM adiado), partindo da 1.0.0 instalada e não da tag
-  0.8.33 do GitHub. Falta o dono escolher **quando** isso entra.
-- **Em aberto, de produto:** hoje o teste é um servidor lançado à mão (`dsh hd-web --port 3099`). O
-  alvo é uma extensão do VS Code que sobe o perfil isolado sozinha e mostra um painel por harness
-  (REQ-01, REQ-02, REQ-04).
+- **Empacotar e instalar o painel do VS Code.** O código está pronto e testado fora do VS Code, mas
+  nada foi empacotado (`.vsix`) nem instalado: instalar no seu VS Code é ação no seu ambiente e pede
+  aval. Depois disso o item 2.5 (DSH + Claude Code lado a lado, cada um com seus projetos) é o teste
+  que fecha o portão do F2.
+- **Chave do OpenRouter no ambiente.** O harness `claude` está registrado com
+  `OPENROUTER_API_KEY` e o `.env` do projeto só tem `AVELLO_API_KEY`, então o processo sobe e o modelo
+  falha. É só exportar a variável (nada vai para arquivo).
+- **Decisão de produto que o mapa revelou:** N harnesses **distintos** convivem na mesma janela, mas N
+  instâncias **do mesmo front-end DSH** não — o próprio readme da extensão de referência registra que
+  o front-end do DSH degenera para singleton com múltiplos webviews no VS Code (`readme.md:263`). Se
+  "dois DSH lado a lado" for requisito, o caminho é o front-end do DSH, não o VS Code.
+
