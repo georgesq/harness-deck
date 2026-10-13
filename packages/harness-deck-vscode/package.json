@@ -199,7 +199,7 @@
     "build": "npm run sync-shared && node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json",
     "typecheck": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
     "watch": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --watch",
-    "test": "npm run build && node test/lifecycle.test.mjs && node test/smoke.mjs",
+    "test": "npm run build && node test/lifecycle.test.mjs && node test/notify.test.mjs && node test/smoke.mjs",
     "package": "node build-package.mjs",
     "sync-shared": "node ../harness-deck-launcher/scripts/sync-shared.mjs"
   },

@@ -29,6 +29,7 @@ import {
   type HarnessEntry,
 } from './registry';
 import { HarnessProcesses, type HarnessState } from './processes';
+import type { StopOutcome } from './shared/process';
 import { HarnessProxy } from './proxy';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, openPanelNames, revealHarnessPanel, updateHarnessPanel } from './panel';
@@ -171,28 +172,84 @@ async function startHarness(entry: HarnessEntry, silent = false): Promise<Harnes
   return state;
 }
 
-/** Stop a harness and update whatever is on screen. */
-async function stopHarness(entry: HarnessEntry): Promise<void> {
-  const outcome = await runtime().stop(entry);
+/** What the owner must see after a stop, independent of VS Code. */
+export interface StopReport {
+  /** Severity of the notification. */
+  severity: 'info' | 'warning';
+  /** Sentence shown in the notification and written to the log. */
+  message: string;
+  /** Extra line for the output channel, when the message needs context. */
+  detail?: string;
+  /** Button offered with the notification, when there is a next step. */
+  action?: 'Ver log';
+}
+
+/**
+ * Decide what to tell the owner after one stop attempt.
+ *
+ * Pure on purpose: the wording is the requirement (REQ-P6), and a wording that
+ * only ever reaches the output channel is a wording the owner never sees.
+ *
+ * @param entry - harness that was asked to stop.
+ * @param outcome - what the stop path actually did.
+ * @returns the notification to show and the line to log.
+ */
+export function stopReport(entry: HarnessEntry, outcome: StopOutcome): StopReport {
   if (outcome.stale) {
     // Never say "parado" while the port answers: that lie is the bug this whole
     // path exists to remove.
-    const message =
-      `O harness "${entry.name}" nao parou: a porta ${entry.port} continua respondendo` +
-      (outcome.pid !== undefined ? ` (pid ${outcome.pid})` : '') +
-      '.';
-    output?.appendLine(`[${entry.name}] ${message}`);
-    void window.showWarningMessage(message, 'Ver log').then((choice: string | undefined) => {
-      if (choice === 'Ver log') void showLog(entry);
-    });
-  } else if (!outcome.stopped) {
-    output?.appendLine(`[${entry.name}] nao havia processo para parar`);
-  } else if (outcome.discovered) {
-    output?.appendLine(
-      `[${entry.name}] parado (${outcome.signal}); o dono da porta nao era o do pid file, pid ${String(outcome.pid)}`,
+    const pid = outcome.pid !== undefined ? ` (pid ${String(outcome.pid)})` : '';
+    return {
+      severity: 'warning',
+      message: `O harness "${entry.name}" nao parou: a porta ${entry.port} continua respondendo${pid}.`,
+      action: 'Ver log',
+    };
+  }
+  if (!outcome.stopped) {
+    return {
+      severity: 'info',
+      message: `O harness "${entry.name}" nao estava rodando; nada a parar.`,
+    };
+  }
+  const detail = outcome.discovered
+    ? `o dono da porta nao era o do pid file, pid ${String(outcome.pid)}`
+    : undefined;
+  return {
+    severity: 'info',
+    message: `O harness "${entry.name}" parou (${outcome.signal}).`,
+    ...(detail === undefined ? {} : { detail }),
+  };
+}
+
+/**
+ * What to warn the owner about when the closing budget did not stop everything.
+ *
+ * The names are the whole point: a warning that says "some harness is still up"
+ * leaves the owner to guess which one (REQ-L3).
+ *
+ * @param survivors - names reported by `stopAll`.
+ * @returns the sentence shown in the warning notification.
+ */
+export function survivorWarning(survivors: readonly string[]): string {
+  return (
+    `Estes harnesses continuam rodando em segundo plano: ${survivors.join(', ')}. ` +
+    'Rode `harness-deck down` (ou pare pela paleta de comandos) para encerrar.'
+  );
+}
+
+/** Stop a harness and update whatever is on screen. */
+async function stopHarness(entry: HarnessEntry): Promise<void> {
+  const outcome = await runtime().stop(entry);
+  const report = stopReport(entry, outcome);
+  output?.appendLine(`[${entry.name}] ${report.message}${report.detail === undefined ? '' : ` — ${report.detail}`}`);
+  if (report.severity === 'warning') {
+    void window.showWarningMessage(report.message, ...(report.action === undefined ? [] : [report.action])).then(
+      (choice: string | undefined) => {
+        if (choice === 'Ver log') void showLog(entry);
+      },
     );
   } else {
-    output?.appendLine(`[${entry.name}] parado (${outcome.signal})`);
+    void window.showInformationMessage(report.message);
   }
   updateHarnessPanel(entry, await runtime().inspect(entry));
   await refresh();
@@ -404,9 +461,7 @@ export async function deactivate(): Promise<void> {
     output?.appendLine(`[harness-deck] encerrados no fechamento: ${result.stopped.join(', ')}`);
   }
   if (result.survivors.length > 0) {
-    const message =
-      `Estes harnesses continuam rodando em segundo plano: ${result.survivors.join(', ')}. ` +
-      'Rode `harness-deck down` (ou pare pela paleta de comandos) para encerrar.';
+    const message = survivorWarning(result.survivors);
     output?.appendLine(`[harness-deck] ${message}`);
     void window.showWarningMessage(message);
   }
