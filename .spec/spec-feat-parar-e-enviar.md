@@ -347,10 +347,18 @@ derrubava o comando inteiro com `erro: EROFS`; agora é aviso.
 
 O contorno **não** é remount da raiz: o dono recusou com razão ("permissao de R/W para raiz, não
 pode, isso é contra segurança"). A raiz do deck é configurável — `HARNESS_DECK_HOME` no CLI e
-`harnessDeck.home` na extensão (`resolveHome`, `registry.ts:206`) — então a saída é apontar a raiz
+`harnessDeck.home` na extensão (`resolveHome`, `registry.ts:60`) — então a saída é apontar a raiz
 para um diretório gravável. Neste ambiente só há dois pontos graváveis fora de `/tmp`: o próprio
-projeto (bind mount `rw`) e `/dev/shm`. Como `/tmp` não sobrevive entre sessões, o caminho natural é
-uma pasta ignorada pelo git dentro do projeto.
+projeto (bind mount `rw`) e `/dev/shm`.
+
+**Decisão do dono (13/10/2026): a raiz passa a ser `.run/deck`, dentro do projeto.** Segurança
+conferida: `.run/` está no `.gitignore` e o git recusa qualquer caminho dentro dele (confirmado com
+`git check-ignore -v .run/deck/.env`), então nada ali entra em commit nem por engano; o único vetor
+seria um `git add -f` ou empacotar a árvore num `git bundle`, atos explícitos. A chave do provider
+**não** foi copiada para dentro do projeto: `.run/deck/.env` é um link simbólico para
+`~/.harnessdeck/.env`, que segue fora da árvore e em modo 600. Os dois harnesses foram registrados de
+novo nessa raiz (com `--key-env OPENROUTER_API_KEY`, que é a variável que a rota do provider usa de
+fato) e `.vscode/settings.json` — agora ignorado — aponta a extensão para o mesmo lugar.
 
 O produto passou a **provar a escrita antes de subir qualquer coisa**: `assertWritableDir` faz um
 probe no diretório e, quando falha, diz o caminho e as duas formas de contornar. Antes, o dono via:
