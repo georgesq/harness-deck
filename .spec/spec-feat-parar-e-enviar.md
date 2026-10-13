@@ -206,18 +206,37 @@ precisa de um caminho confiável para achar o dono dela).
   `createProcessShutdown`). Então o sinal certo resolve — o que não resolve é **não saber para quem
   mandar o sinal**.
 
-### 4.4 Requisitos
+### 4.4 Segundo achado — o pid file estava certo e a checagem de vida mentiu
+
+Depois de o dono rodar `kill`, o `ss -ltnp` dele mostrou:
+
+```
+LISTEN 0 511 127.0.0.1:3131 0.0.0.0:* users:(("MainThread",pid=394127,fd=21))
+```
+
+- O pid **394127 é o dono real da porta** — o mesmo que está no pid file. Ou seja: o deck tinha a
+  informação certa e concluiu que o processo estava morto.
+- O nome do thread é `MainThread`, assinatura de runtime embutido — não de um `node` comum. O deck
+  não pode assumir que o processo que ele subiu é o processo que fica com a porta.
+- `processAlive(pid)` (`process.kill(pid, 0)`) devolveu falso negativo nesse ambiente, e o
+  `stopHarness` (`launcher.ts:274-277`) então **removeu o pid file e devolveu "nada para parar"**,
+  deixando o servidor no ar e o deck sem o endereço do dono. O mesmo vale para o `inspect`, que
+  passou a mostrar `parado` com a porta ocupada.
+
+### 4.5 Requisitos
 
 | ID | Requisito | Verificação |
 |---|---|---|
-| **REQ-L1** | Ao fechar a janela do VS Code (ou desativar a extensão), **nenhum** harness subido por aquele painel pode continuar no ar. | Teste automatizado que sobe um harness pelo painel, chama o `deactivate` e prova porta fechada e pid inexistente. |
+| **REQ-L1** | Ao fechar a janela do VS Code (ou desativar a extensão), **nenhum** harness subido por aquele painel pode continuar no ar — nem o processo do harness, nem os filhos que ele criou (o CLI do Claude Code, subprocessos de ferramenta, workers). | Teste automatizado que sobe um harness pelo painel, chama o `deactivate` e prova porta fechada, pid inexistente e **nenhum filho sobrevivente**. |
 | **REQ-L2** | O encerramento não pode depender de espera longa: primeiro sinal, checagem rápida, e **SIGKILL como rede** — tudo dentro do orçamento que o VS Code dá ao `deactivate`. | Teste com processo que ignora SIGTERM: mesmo assim a porta tem de fechar. |
 | **REQ-L3** | Se o painel **não** consegue garantir a parada, ele tem de dizer isso ao dono ao subir: aviso explícito de que aquele harness vai sobreviver ao fechamento da janela (e onde está o log). Nada de silêncio. | Teste manual com print + asserção do texto. |
 | **REQ-L4** | O deck **descobre o dono real da porta** quando o pid file está morto ou ausente, em vez de desistir: a porta é a verdade. Técnicas disponíveis na máquina do dono: `lsof -t -i :<porta>`, `fuser -n tcp <porta>`, e o mapeamento socket→pid em `/proc/net/tcp`. | Teste com pid file morto e listener vivo: a parada tem de funcionar. |
 | **REQ-L5** | Depois de qualquer parada, o pid file **não pode mentir**: se o processo morreu, o arquivo sai; se sobreviveu, o arquivo fica e a mensagem diz o motivo. | Asserção sobre o arquivo nos testes de parada. |
 | **REQ-L6** | `harnessDeck.stopOnExit` continua existindo, mas o padrão e o texto da configuração têm de ser honestos: "parar o que esta janela subiu ao fechar" — e o que ele **não** cobre (subido por fora) tem de estar dito na descrição da configuração. | Revisão do `package.json` da extensão + teste manual. |
+| **REQ-L7** | A vida do harness **não** pode ser decidida só por `kill(pid, 0)`: o veredito é a porta. O processo só conta como morto quando a porta está fechada **e** o pid não responde; e o deck tem de ter caminho alternativo para achar o dono quando o `kill(pid, 0)` der falso negativo (foi o que aconteceu: pid file certo, `processAlive` falso, servidor no ar). | Teste em que `processAlive` devolve falso e a porta continua ocupada: o deck tem de continuar reportando "no ar" e conseguir parar. |
+| **REQ-L8** | Parar mata a **árvore**: o processo do harness e os filhos (CLI do Claude Code, subprocessos de ferramenta). Nada de neto sobrevivendo porque o pai morreu. | Teste com processo pai que gera um filho: depois do stop, nenhum dos dois existe. |
 
-### 4.5 Fora de escopo
+### 4.6 Fora de escopo
 Daemon/serviço gerenciado pelo sistema operacional, subir harness que sobrevive de propósito e
 reconectar na próxima janela (é outra feature; se o dono quiser, vira item próprio).
 
@@ -230,9 +249,10 @@ reconectar na próxima janela (é outra feature; se o dono quiser, vira item pr�
    mensagem que nomeia porta e pid file.
 2. Teste automatizado prova REQ-M1/M2/M3/M4 com um agente ACP falso controlado pelo teste (mesma
    técnica já usada em `.run-fake-anthropic.mjs` no repositório).
-3. Teste automatizado prova REQ-L1/L2/L4/L5: subir pelo painel, chamar o `deactivate`, provar
-   **porta fechada e pid inexistente** — inclusive no caso em que o processo ignora SIGTERM e no
-   caso em que o pid file aponta para um processo morto.
+3. Teste automatizado prova REQ-L1/L2/L4/L5/L7/L8: subir pelo painel, chamar o `deactivate`, provar
+   **porta fechada e pid inexistente** — inclusive no caso em que o processo ignora SIGTERM, no
+   caso em que o pid file aponta para um processo morto, no caso em que `processAlive` dá falso
+   negativo com a porta ocupada, e no caso de processo com filho.
 4. `npm test` do lançador continua verde (hoje: 3 suítes) e o teste de fumaça do painel
    (`node packages/harness-deck-vscode/test/smoke.mjs`) continua verde.
 5. `tsc --noEmit` limpo nos pacotes tocados. **Atenção:** o `tsc` só existe em
@@ -274,9 +294,10 @@ reconectar na próxima janela (é outra feature; se o dono quiser, vira item pr�
 - `packages/harness-deck-claude-code/test/turn-cancel.test.ts` — REQ-M4/M5 com agente ACP falso.
 - `packages/harness-deck-vscode/test/smoke.mjs` — REQ-P4: o painel e o CLI resolvem parada pelo
   mesmo caminho.
-- `packages/harness-deck-vscode/test/lifecycle.test.ts` — REQ-L1/L2/L4/L5: sobe processo de mentira
-  com pid file, chama o encerramento e prova porta fechada; repete com processo que ignora SIGTERM e
-  com pid file apontando para processo morto.
+- `packages/harness-deck-vscode/test/lifecycle.test.ts` — REQ-L1/L2/L4/L5/L7/L8: sobe processo de
+  mentira com pid file, chama o encerramento e prova porta fechada; repete com processo que ignora
+  SIGTERM, com pid file apontando para processo morto, com `processAlive` mentindo e com árvore de
+  dois processos.
 
 ## 8. Ligação com o que já está no plano
 
