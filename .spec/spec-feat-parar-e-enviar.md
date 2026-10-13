@@ -1,4 +1,6 @@
-# Spec de feature — parar de verdade e enviar sem esperar
+# Spec de feature — parar de verdade, enviar sem esperar, não deixar órfão
+
+Três defeitos que impediram o dono de usar o deck no VS Code. Um turno de implementação.
 
 **Status:** pronto para virar tarefa no Paperclip (não implementado)
 **Dono do problema:** georgesq · **Autor da spec:** sessão do mestre em 13/10/2026
@@ -166,28 +168,87 @@ desenhar tool call na trajetória (pendência do **B.4**). A fila em memória po
 
 ---
 
-## 4. Critérios de aceite (o que fecha a tarefa)
+## 4. Problema 3 — fechar o painel/VS Code deixa harness rodando em segundo plano
+
+### 4.1 Sintoma do dono
+*"se fechar o extension não derruba tudo, precisamos ver essa funcionalidade, para não ficar algo
+rodando em BG"*. O dono fechou tudo e **a porta 3131 continuou respondendo**.
+
+### 4.2 Evidência (13/10/2026, depois de o dono fechar o VS Code)
+
+```
+$ ss -ltnp | grep 3131
+LISTEN 127.0.0.1:3131          # VS Code fechado, servidor no ar
+$ cat ~/.harnessdeck/.run/claude/dsh.pid
+394127                          # processo morto: o pid file mente
+```
+
+### 4.3 Causa
+
+- `packages/harness-deck-vscode/src/extension.ts` (função `deactivate`) só para **o que esta janela
+  subiu** (`processes?.stopAll()`), e só quando `harnessDeck.stopOnExit` está ligado. Harness subido
+  pelo terminal/CLI, ou subido por uma janela anterior, **não** é derrubado.
+- Quando a janela do VS Code é recarregada ou fechada, o extension host é recriado/terminado e o
+  `Map` de processos vivos se perde: o painel **deixa de saber** o que subiu. O processo continua
+  vivo, reparentado, e o pid file fica apontando para um pid que já morreu.
+- `deactivate` é assíncrono e o VS Code **não espera** indefinidamente por ele. Um `stopAll` que
+  espera 8 s por harness pode ser cortado no meio, deixando o processo vivo.
+- Bônus verificado no DSH: ele **trata SIGTERM** e sai com código 0
+  (`/usr/local/lib/node_modules/@deepseek-ai/dsh/lib/profile-boot-BZ2ZjNWi.js:249-251`, via
+  `createProcessShutdown`). Então o sinal certo resolve — o que não resolve é **não saber para quem
+  mandar o sinal**.
+
+### 4.4 Requisitos
+
+| ID | Requisito | Verificação |
+|---|---|---|
+| **REQ-L1** | Ao fechar a janela do VS Code (ou desativar a extensão), **nenhum** harness subido por aquele painel pode continuar no ar. | Teste automatizado que sobe um harness pelo painel, chama o `deactivate` e prova porta fechada e pid inexistente. |
+| **REQ-L2** | O encerramento não pode depender de espera longa: primeiro sinal, checagem rápida, e **SIGKILL como rede** — tudo dentro do orçamento que o VS Code dá ao `deactivate`. | Teste com processo que ignora SIGTERM: mesmo assim a porta tem de fechar. |
+| **REQ-L3** | Se o painel **não** consegue garantir a parada, ele tem de dizer isso ao dono ao subir: aviso explícito de que aquele harness vai sobreviver ao fechamento da janela (e onde está o log). Nada de silêncio. | Teste manual com print + asserção do texto. |
+| **REQ-L4** | O deck **descobre o dono real da porta** quando o pid file está morto ou ausente, em vez de desistir: a porta é a verdade. Técnicas disponíveis na máquina do dono: `lsof -t -i :<porta>`, `fuser -n tcp <porta>`, e o mapeamento socket→pid em `/proc/net/tcp`. | Teste com pid file morto e listener vivo: a parada tem de funcionar. |
+| **REQ-L5** | Depois de qualquer parada, o pid file **não pode mentir**: se o processo morreu, o arquivo sai; se sobreviveu, o arquivo fica e a mensagem diz o motivo. | Asserção sobre o arquivo nos testes de parada. |
+| **REQ-L6** | `harnessDeck.stopOnExit` continua existindo, mas o padrão e o texto da configuração têm de ser honestos: "parar o que esta janela subiu ao fechar" — e o que ele **não** cobre (subido por fora) tem de estar dito na descrição da configuração. | Revisão do `package.json` da extensão + teste manual. |
+
+### 4.5 Fora de escopo
+Daemon/serviço gerenciado pelo sistema operacional, subir harness que sobrevive de propósito e
+reconectar na próxima janela (é outra feature; se o dono quiser, vira item próprio).
+
+---
+
+## 5. Critérios de aceite (o que fecha a tarefa)
 
 1. Teste automatizado prova REQ-P1/P2/P3: subir um harness pelo CLI, chamar o stop pelo painel,
    provar **porta fechada + pid inexistente**; e o caso "pid file morto com porta viva" falhando com
    mensagem que nomeia porta e pid file.
 2. Teste automatizado prova REQ-M1/M2/M3/M4 com um agente ACP falso controlado pelo teste (mesma
    técnica já usada em `.run-fake-anthropic.mjs` no repositório).
-3. `npm test` do lançador continua verde (hoje: 3 suítes) e o teste de fumaça do painel
+3. Teste automatizado prova REQ-L1/L2/L4/L5: subir pelo painel, chamar o `deactivate`, provar
+   **porta fechada e pid inexistente** — inclusive no caso em que o processo ignora SIGTERM e no
+   caso em que o pid file aponta para um processo morto.
+4. `npm test` do lançador continua verde (hoje: 3 suítes) e o teste de fumaça do painel
    (`node packages/harness-deck-vscode/test/smoke.mjs`) continua verde.
-4. `tsc --noEmit` limpo nos pacotes tocados. **Atenção:** o `tsc` só existe em
+5. `tsc --noEmit` limpo nos pacotes tocados. **Atenção:** o `tsc` só existe em
    `packages/harness-deck-claude-code/node_modules/.bin/tsc`; `npm run typecheck` do lançador falha
    com `tsc: not found` — use o binário do outro pacote.
-5. Relatório no fim dizendo, para cada requisito, **como foi verificado** — sem estimativa e sem
+6. Relatório no fim dizendo, para cada requisito, **como foi verificado** — sem estimativa e sem
    "deve funcionar". Campo que não se sabe é **não localizado**.
-6. Commits em inglês, Conventional Commits, um por caminho; nada de `git add .`; push na branch
+7. Commits em inglês, Conventional Commits, um por caminho; nada de `git add .`; push na branch
    `chore/protocolo-contribuicao` (a `main` é PR-only).
 
-## 5. Dependências e riscos
+## 6. Dependências e riscos
 
-- **Dependência dura:** o ACP expõe `session/cancel`? Confirmar na versão instalada do
-  `claude-agent-acp` (hoje `0.89.1`) antes de prometer o REQ-M4. Se não expuser, o REQ-M4 vira
-  "matar e subir de novo" e isso tem de ser dito na tarefa, não escondido.
+- **Dependência do REQ-M4: resolvida, `session/cancel` existe.** Verificado em 13/10/2026 no
+  instalado, não em suposição:
+  - o CLI trata a notificação: `@agentclientprotocol/claude-agent-acp@0.89.1`,
+    `dist/acp-agent.js:74` (`session/cancel`) e `:3261`;
+  - o SDK do cliente expõe `cancel(params): Promise<void>` e documenta o comportamento esperado
+    (parar pedidos ao modelo, abortar tool calls, responder ao `session/prompt` original com
+    `StopReason::Cancelled`): `@agentclientprotocol/sdk`, `dist/acp.d.ts:1205-1222`;
+  - o CLI instalado tem ainda `session/steering` (`dist/acp-agent.js`), que pode ser a via para o
+    REQ-M2/REQ-M3b — **a confirmar na implementação**, não dado como certo.
+  - Atenção: abortar o `cancellationSignal` do `prompt()` manda `$/cancel_request` (cancelamento de
+    request JSON-RPC), **não** o `session/cancel`. Para o REQ-M4 o que vale é a notificação
+    `session/cancel`; o bridge precisa guardar a sessão ACP viva para poder mandá-la.
 - **Risco 1:** o DSH é pré-lançamento (`0.2.0-rc.2`). Toda dependência de API interna dele fica
   isolada numa camada só — é regra do repositório.
 - **Risco 2:** o painel hoje **não** escreve no registro nem materializa perfil. Se o REQ-P4 for
@@ -197,7 +258,7 @@ desenhar tool call na trajetória (pendência do **B.4**). A fila em memória po
   reproduzindo exatamente esse estado (é o caso de teste mais valioso) — mas **mexer em
   `~/.harnessdeck` e na instalação do DSH pede aval do dono**, conforme `AGENTS.md`.
 
-## 6. Plano de teste mínimo (sugestão, não obrigação)
+## 7. Plano de teste mínimo (sugestão, não obrigação)
 
 - `packages/harness-deck-launcher/test/stop.test.ts` — REQ-P1/P2/P3 contra um processo de mentira
   (um `node -e 'setInterval(()=>{},1e3)'` com pid file próprio).
@@ -205,8 +266,11 @@ desenhar tool call na trajetória (pendência do **B.4**). A fila em memória po
 - `packages/harness-deck-claude-code/test/turn-cancel.test.ts` — REQ-M4/M5 com agente ACP falso.
 - `packages/harness-deck-vscode/test/smoke.mjs` — REQ-P4: o painel e o CLI resolvem parada pelo
   mesmo caminho.
+- `packages/harness-deck-vscode/test/lifecycle.test.ts` — REQ-L1/L2/L4/L5: sobe processo de mentira
+  com pid file, chama o encerramento e prova porta fechada; repete com processo que ignora SIGTERM e
+  com pid file apontando para processo morto.
 
-## 7. Ligação com o que já está no plano
+## 8. Ligação com o que já está no plano
 
 - O **B.4** de `docs/plano.md` já estava marcado como "aprovado e recusado, os dois observados
   rodando" — falta o tool call na trajetória. O REQ-M4 puxa a parte de abort do mesmo item.
