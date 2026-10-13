@@ -41,11 +41,36 @@ exata que estava em disco na execução que falhou fica **não localizada**.
 Regra que passa a valer nas próximas quebras: **um arquivo, um dono por vez** — fatia que precise do
 mesmo arquivo de outra espera a outra fechar.
 
+## Descoberta do teste do dono (13/10/2026): campo da chave travado
+
+O dono abriu `models/third-party`, escolheu Google e o campo da chave veio **somente-leitura**. Não é
+o deck: `~/.harnessdeck/.env` tem só `OPENROUTER_API_KEY` e o cofre do harness
+(`<raiz>/homes/<nome>/.credentials.yaml`) está sem nenhum provider. A origem é o **ambiente do shell**:
+
+- `~/.bashrc` exporta `GOOGLE_API_KEY`, além de `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` e
+  `OPENROUTER_API_KEY`;
+- o VS Code server herda, o host da extensão repassa a todo processo que ele sobe, e o harness vê a
+  variável no ambiente do processo;
+- `credentials-local.describe` responde `source: "env"`, `writable: false` quando a referência vem do
+  ambiente herdado ([dsh-credentials-local:490-499](file:///usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-credentials-local/lib/index.js#L490-L499));
+- a página marca `readOnly: !writable` e o campo não aceita edição.
+
+Contorno imediato, sem código: tirar o export do `~/.bashrc` e reiniciar o VS Code server.
+
+Decisão do dono: **não corrigir agora**. A frente seguinte já vai escrever para outros harnesses e
+refatorar para ser configurável sem intrusão; o desenho a considerar lá é o deck **não repassar ao
+harness** as variáveis de provider herdadas do shell, injetando no lugar o que estiver no cofre do
+harness. Isso torna a UI dona da chave e o `.env` do deck volta a ser o caminho de quem roda sem
+painel.
+
 ## Pendências fora das fatias
 
-- [ ] VSIX reempacotado e conferido (arquivo e contagem) — não empacotar em cima de estado que ainda
-      está sendo escrito.
-- [ ] Commit por caminho e push, depois das fatias C e D fechadas.
-- [ ] Teste do dono: instalar, `Developer: Reload Window`, configurar o provedor pelo painel, subir e
+- [x] VSIX reempacotado e conferido (arquivo e contagem) — `dist/harness-deck-vscode-0.1.2.vsix`,
+      47048 bytes, 14 arquivos; instalado no VS Code do dono em 13/10/2026 (`0.1.1` → `0.1.2`).
+- [x] Commit por caminho e push, depois das fatias C e D fechadas — 6 commits em
+      `origin/feat/model-list-and-tool-approval`, o último `886e2a1`.
+- [~] Teste do dono: instalar, `Developer: Reload Window`, configurar o provedor pelo painel, subir e
       mandar uma mensagem de verdade numa rota não-OpenRouter (é a prova que fecha o REQ-R3 da spec
-      [spec-feat-provider-route.md](spec-feat-provider-route.md)).
+      [spec-feat-provider-route.md](spec-feat-provider-route.md)). Instalou e chegou até a tela de
+      `models/third-party`; parou no campo da chave travado (acima). A mensagem real em rota não
+      OpenRouter segue sem prova, e o escopo foi congelado pelo dono antes disso.
