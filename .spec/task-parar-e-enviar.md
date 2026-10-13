@@ -86,10 +86,26 @@ Suíte da ponte verde: **12 verificações** no laço e **7** no controle ACP. `
 | [x] | Push da branch | `3dc526b..a83a43a` em `feat/model-list-and-tool-approval` |
 | [ ] | Reinstalar o VSIX no VS Code | depende do dono |
 | [x] | Prova de REQ-P6 e REQ-L3 sem depender do host | `test/notify.test.mjs`, 7 verificações |
-| [ ] | Rotacionar a chave OpenRouter exposta | depende do dono |
-| [ ] | Popular a lista de workspaces do harness `dsh` | depende do dono |
+| [x] | ~~Rotacionar a chave OpenRouter exposta~~ | **não havia vazamento**: o README traz o exemplo `sk-or-v1-...`; varredura da árvore e de todo o histórico do git achou 0 chaves reais. A chave vive só em `~/.harnessdeck/.env` (600) |
+| [x] | Lista de workspaces do `dsh` | decidido pelo dono: fica como está, ele adiciona conforme usa |
 
-## 6. Fora de escopo (registrado para não voltar)
+## 6. Defeito achado ao consertar a chave do `dsh`
+
+O harness `dsh` apontava para `DEEPSEEK_API_KEY` (chave da API oficial, aposentada pelo dono)
+enquanto o provider é `openrouter` — o mesmo defeito já corrigido no `claude`. Ao re-registrar
+com `add --force`, apareceu um segundo defeito, este no comando: **`add --force` reescrevia a
+entrada inteira**. A porta foi de 3130 para 3100 (padrão) e só voltou porque foi corrigida à mão.
+O `home` também era recalculado, o que orfanaria as workspaces do harness.
+
+| | Item | Prova |
+| --- | --- | --- |
+| [x] | `add --force` preserva porta, `home`, provider, lista de modelos e nota quando não mencionados | `test/add.test.ts` (6 verificações, novas) |
+| [x] | Flag explícita continua vencendo o valor lembrado | `test/add.test.ts` |
+| [x] | Sem `--force` o `add` continua recusando reescrever | `test/add.test.ts` |
+| [x] | `dsh` com `OPENROUTER_API_KEY`, sobe sem aviso de chave | `up dsh` → `pronto em http://127.0.0.1:3130` |
+| [x] | Os dois harnesses sobem e param limpos depois da reescrita | `up`/`down` de `claude` e `dsh`, portas 3131 e 3130 fechadas no fim |
+
+## 7. Fora de escopo (registrado para não voltar)
 
 - Daemon gerenciado pelo sistema operacional e o modo "sobreviver e reconectar": fora.
 - Durabilidade da fila além do que o DSH já grava: item B.5 da spec.
