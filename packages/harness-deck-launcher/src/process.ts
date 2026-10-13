@@ -23,8 +23,10 @@
  *    tool subprocesses. Signalling only the parent leaves them running.
  */
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
-import { readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
@@ -68,6 +70,36 @@ export function processAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Prove that a directory can be written to, before anything is started there.
+ *
+ * A harness needs a writable home: the pid file, the log and the DSH state all
+ * live under it. When the deck home sits on a read-only filesystem the failure
+ * used to surface deep inside the boot as `EROFS: unlink '.../node_modules/...'`,
+ * which points at the wrong thing and says nothing about what to do. Probing
+ * first turns that into one sentence that names the path and the fix.
+ *
+ * @param dir - directory that must exist and be writable.
+ * @param label - what the directory is, for the message (`a raiz do deck`).
+ * @throws Error when the directory cannot be created or written to.
+ */
+export async function assertWritableDir(dir: string, label: string): Promise<void> {
+  const probe = join(dir, `.harness-deck-write-probe-${randomUUID()}`);
+  try {
+    await mkdir(dir, { recursive: true });
+    await writeFile(probe, '');
+    await rm(probe, { force: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'desconhecido';
+    throw new Error(
+      `${label} não aceita escrita (${dir}): ${code}. ` +
+        'Aponte a raiz para um diretório gravável com ' +
+        '`HARNESS_DECK_HOME=/caminho/gravável` no CLI ou com a configuração ' +
+        '`harnessDeck.home` na extensão.',
+    );
   }
 }
 

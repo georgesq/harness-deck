@@ -17,9 +17,19 @@ import { materializeProfile, pathExists, profileDir, type MaterializeResult } fr
 // The lifecycle rules live in one module so the CLI and the VS Code panel can
 // never disagree about what "stopped" means. Re-exported below for callers that
 // still import them from here.
-import { findPortOwner, killTree, portListening, processAlive, readPid, stopProcess, waitForStopped, type StopOutcome } from './process.ts';
+import {
+  assertWritableDir,
+  findPortOwner,
+  killTree,
+  portListening,
+  processAlive,
+  readPid,
+  stopProcess,
+  waitForStopped,
+  type StopOutcome,
+} from './process.ts';
 
-export { findPortOwner, killTree, portListening, processAlive, readPid, stopProcess, waitForStopped };
+export { assertWritableDir, findPortOwner, killTree, portListening, processAlive, readPid, stopProcess, waitForStopped };
 export type { StopOutcome, StopSignal } from './process.ts';
 
 /** Name of the executable the launcher spawns. */
@@ -170,6 +180,12 @@ export interface StartResult {
 export async function startHarness(home: string, entry: HarnessEntry, options: StartOptions): Promise<StartResult> {
   const current = await inspect(home, entry);
   if (current.running) return { state: current, alreadyRunning: true };
+
+  // Fail here, with a sentence that names the path, instead of deep inside the
+  // boot with `EROFS: unlink '.../node_modules/...'` — the deck home is often on
+  // a read-only filesystem (the owner's is), and nothing can be started there.
+  await assertWritableDir(home, 'a raiz do deck');
+  await assertWritableDir(harnessHome(home, entry), `a DSH_HOME do harness "${entry.name}"`);
 
   let materialized: MaterializeResult | undefined;
   if (!options.skipMaterialize) {

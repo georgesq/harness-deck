@@ -17,7 +17,14 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
-import { findPortOwner, killTree, portListening, processAlive, stopProcess } from '../src/process.ts';
+import {
+  assertWritableDir,
+  findPortOwner,
+  killTree,
+  portListening,
+  processAlive,
+  stopProcess,
+} from '../src/process.ts';
 
 let checks = 0;
 function ok(label: string): void {
@@ -216,7 +223,26 @@ const root = await mkdtemp(join(tmpdir(), 'harness-deck-stop-'));
   ok('REQ-L5: pid file em diretório somente leitura — a parada vale e o aviso é explícito');
 }
 
-// 8. findPortOwner is the piece that made cases 2 and 3 work.
+// 8. A deck home on a read-only filesystem is named before anything is spawned.
+{
+  const locked = join(root, 'read-only-home');
+  await mkdir(locked, { recursive: true });
+  await chmod(locked, 0o500);
+  let message = '';
+  try {
+    await assertWritableDir(locked, 'a raiz do deck');
+  } catch (error) {
+    message = (error as Error).message;
+  } finally {
+    await chmod(locked, 0o700);
+  }
+  assert.match(message, /a raiz do deck não aceita escrita/);
+  assert.match(message, /HARNESS_DECK_HOME=/, 'a mensagem tem de dizer o que fazer');
+  assert.match(message, /harnessDeck\.home/, 'e o equivalente na extensão');
+  ok('raiz somente leitura: o erro nomeia o caminho e o contorno, antes de subir nada');
+}
+
+// 9. findPortOwner is the piece that made cases 2 and 3 work.
 {
   const port = await freePort();
   const pid = await fakeHarness(port);
