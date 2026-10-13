@@ -25,7 +25,7 @@ Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combina
 | --- | --- | --- | --- |
 | [x] | REQ-L1 — fechar mata processo **e** filhos | `process.ts` (`killTree`) + `extension.ts` (`deactivate`) | `lifecycle.test.mjs` caso 1 |
 | [x] | REQ-L2 — orçamento com SIGKILL no fim | `waitForStopped` + `DEACTIVATE_BUDGET_MS` | `stop.test.ts` caso 4; `lifecycle.test.mjs` caso 4 |
-| [x] | REQ-L4 — sem pid file, a porta revela o dono | `findPortOwner` (lsof → fuser) | `stop.test.ts` caso 8; `lifecycle.test.mjs` caso 3 |
+| [x] | REQ-L4 — sem pid file, a porta revela o dono | `findPortOwner` (lsof → fuser → `/proc`) | `stop.test.ts` caso 8; `lifecycle.test.mjs` caso 3; `procfsPortOwner` prova a terceira técnica sem os dois utilitários |
 | [x] | REQ-L5 — raiz somente leitura não derruba a parada | `removePidFile` best-effort + aviso | `stop.test.ts` caso 7 |
 | [x] | REQ-L7 — quem decide é a porta, não `kill(pid, 0)` | `portListening` no veredito | todos os casos de parada |
 | [x] | REQ-L8 — mata a árvore, não só o processo do harness | `killTree` (`-pid`) | `stop.test.ts` caso 5; `lifecycle.test.mjs` caso 1 |
