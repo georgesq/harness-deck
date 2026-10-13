@@ -2,7 +2,7 @@
   "name": "harness-deck-vscode",
   "displayName": "Harness Deck",
   "description": "Abre varios harness de agente (DSH, Claude Code e outros via ACP) na mesma janela do VS Code, cada um com o seu proprio processo, porta e workspaces.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "georgesq",
   "license": "MIT",
   "private": true,

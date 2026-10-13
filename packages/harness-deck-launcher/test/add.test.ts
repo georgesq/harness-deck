@@ -82,5 +82,62 @@ ok('a flag explícita vence o valor lembrado');
 await assert.rejects(() => cli_('add', 'teste'), /já existe/);
 ok('sem --force o add continua recusando reescrever');
 
+// --- trocar de provider -----------------------------------------------------
+// The owner's case of 13/10/2026: the deck has to be able to leave a provider
+// that does not answer on the network it is running on. The route is no longer
+// a closed set, so a harness can be pointed at another one without a source
+// change — including a local endpoint that takes no credential at all.
+
+// A route the installed catalog ships needs nothing but its name.
+await cli_('add', 'teste', '--force', '--provider', 'anthropic', '--model', 'claude-sonnet-5.5');
+const anthropic = (await entry('teste')).provider as Record<string, unknown>;
+assert.equal(anthropic.kind, 'anthropic');
+assert.equal(anthropic.apiKeyEnv, 'ANTHROPIC_API_KEY', 'a variável da rota não veio do catálogo');
+assert.equal(anthropic.baseUrl, 'https://api.anthropic.com');
+ok('add --provider aceita uma rota do catálogo, com a chave e a URL dela');
+
+// A local endpoint: no key convention to guess, and it speaks OpenAI.
+await cli_('add', 'teste', '--force', '--provider', 'ollama', '--model', 'qwen3-coder:30b');
+const ollama = (await entry('teste')).provider as Record<string, unknown>;
+assert.equal(ollama.baseUrl, 'http://127.0.0.1:11434/v1');
+assert.equal(ollama.apiKeyEnv, 'LLM_API_KEY');
+ok('add --provider aceita endpoint local e não inventa chave obrigatória');
+
+// A route nobody knows is only accepted when it says where to call and what to
+// speak; otherwise the harness would fail to boot with a message from inside.
+await cli_(
+  'add', 'teste', '--force', '--provider', 'gateway-da-empresa',
+  '--base-url', 'https://llm.interno/v1', '--api', 'openai-completions',
+  '--key-env', 'GATEWAY_API_KEY', '--model', 'time-interno-70b',
+);
+const gateway = (await entry('teste')).provider as Record<string, unknown>;
+assert.equal(gateway.kind, 'gateway-da-empresa');
+assert.equal(gateway.api, 'openai-completions');
+ok('rota desconhecida entra quando declara base-url e api');
+
+await assert.rejects(
+  () => cli_('add', 'teste', '--force', '--provider', 'gateway-sem-url', '--model', 'x'),
+  /needs "baseUrl" and "api"/,
+);
+ok('rota desconhecida sem base-url é recusada com o motivo');
+
+// The generated profile is what the DSH actually reads: the api and the URL
+// have to land there, and the model list is still the registered one.
+const { profilePatchYml } = await import('../src/materialize.ts');
+const { normalizeProvider } = await import('../src/registry.ts');
+const built = normalizeProvider(
+  { kind: 'gateway-da-empresa', model: 'time-interno-70b', models: ['time-interno-70b'], apiKeyEnv: 'GATEWAY_API_KEY', baseUrl: 'https://llm.interno/v1', api: 'openai-completions' },
+  'teste',
+);
+assert.ok(built !== undefined);
+const patch = profilePatchYml({
+  name: 'teste', profile: 'teste', port: 3130, engine: 'dsh', enabled: true, provider: built.provider,
+});
+assert.ok(patch.includes('gateway-da-empresa:'), 'a rota não chegou ao patch');
+assert.ok(patch.includes('api: openai-completions'), 'o protocolo não chegou ao patch');
+assert.ok(patch.includes('baseURL: https://llm.interno/v1'), 'a URL não chegou ao patch');
+assert.ok(patch.includes('- id: time-interno-70b'), 'a lista de modelos não chegou ao patch');
+ok('o patch gerado carrega rota, protocolo, URL e a lista de modelos');
+
 await rm(home, { recursive: true, force: true });
 process.stdout.write(`\ntudo ok (${checks} verificações)\n`);

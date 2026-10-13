@@ -17,17 +17,23 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  credentialEnv,
   DEFAULT_HARNESS_DECK_HOME,
+  DEFAULT_KEY_ENV,
   DEFAULT_PROVIDER,
   HARNESS_DECK_HOME_ENV,
-  PROVIDER_KEY_ENV,
+  PROVIDER_BASE_URLS,
+  providerKeyEnv,
   RegistryError,
   envFilePath,
   findHarness,
   harnessHome,
+  harnessLogPath,
+  harnessUrl,
   harnessesHome,
   loadEnvFile,
   loadRegistry,
+  normalizeProvider,
   portOwner,
   registryPath,
   removeHarness,
@@ -42,8 +48,6 @@ import {
 import {
   LaunchError,
   appendLog,
-  harnessLogPath,
-  harnessUrl,
   inspect,
   inspectAll,
   startHarness,
@@ -59,12 +63,6 @@ const FIRST_PORT = 3100;
 
 /** Engine used when `add` gets no `--engine`. */
 const DEFAULT_ENGINE: HarnessEngine = 'dsh';
-
-/** Environment variable read for a credential, per engine, when none is given. */
-const DEFAULT_KEY_ENV: Record<HarnessEngine, string> = {
-  dsh: 'DEEPSEEK_API_KEY',
-  'claude-code': 'ANTHROPIC_API_KEY',
-};
 
 /** Where the plugin package lives, derived from this file's location. */
 function repoRootFromThisFile(): string {
@@ -141,7 +139,7 @@ const HELP = `harness-deck — registro e lançador de harness
 Uso:
   harness-deck list [--json]
   harness-deck add <nome> [--engine dsh|claude-code] [--port <porta>]
-                          [--provider openrouter|deepseek] [--model <id>]...
+                          [--provider <rota>] [--model <id>]... [--api <protocolo>]
                           [--key-env <VAR>] [--base-url <url>] [--note <texto>]
                           [--dsh-home <dir>] [--force]
   harness-deck rm <nome> [--purge]
@@ -246,37 +244,38 @@ async function commandList(home: string, options: Options): Promise<void> {
   for (const state of states) process.stdout.write(`${stateLine(state)}\n`);
 }
 
-/**
- * Environment variable that holds this harness' credential.
- *
- * The provider block wins (that is the route the DSH and the bridge actually
- * call); `providerApiKeyEnv` is the explicit per-harness override, and the
- * engine default is the last resort.
- */
-function credentialEnv(entry: HarnessEntry): string {
-  return entry.providerApiKeyEnv ?? entry.provider?.apiKeyEnv ?? DEFAULT_KEY_ENV[entry.engine];
-}
-
 /** Build the provider block of a new entry from the flags. */
 function buildProvider(options: Options, previous?: HarnessProvider): HarnessProvider {
-  const kind = (flag(options, 'provider') ?? previous?.kind ?? DEFAULT_PROVIDER.kind) as HarnessProvider['kind'];
-  if (kind !== 'openrouter' && kind !== 'deepseek') {
-    fail(`--provider aceita "openrouter" ou "deepseek", não "${String(kind)}"`);
+  const kind = flag(options, 'provider') ?? previous?.kind ?? DEFAULT_PROVIDER.kind;
+  // Any route id is accepted: the installed pi-ai catalog owns that list and a
+  // deck running on a network without the usual provider has to be able to name
+  // another one (owner's decision of 13/10/2026). `normalizeProvider` enforces
+  // the shape, and asks a route outside the table for its `--base-url`/`--api`.
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(kind)) {
+    fail(`--provider aceita um id de rota, não "${kind}"`);
   }
   const models = options.flags.get('model') ?? [];
   const model = models[0] ?? previous?.model ?? DEFAULT_PROVIDER.model;
-  const apiKeyEnv = flag(options, 'key-env') ?? previous?.apiKeyEnv ?? PROVIDER_KEY_ENV[kind];
-  const baseUrl = flag(options, 'base-url') ?? previous?.baseUrl;
+  // Switching route drops what the old route remembered. A key variable and an
+  // endpoint belong to the provider they were set for: keeping them while the
+  // route changes is how a harness ends up sending the OpenRouter key to
+  // Anthropic. An explicit flag always wins.
+  const switched = previous !== undefined && previous.kind !== kind;
+  const remembered = switched ? undefined : previous;
+  const apiKeyEnv = flag(options, 'key-env') ?? remembered?.apiKeyEnv ?? providerKeyEnv(kind);
+  const baseUrl = flag(options, 'base-url') ?? remembered?.baseUrl ?? PROVIDER_BASE_URLS[kind];
+  const api = flag(options, 'api') ?? remembered?.api;
   // `--model` repeated builds the list the DSH model selector offers; the
   // first one is also the harness' starting model. A single `--model` (or
   // none) leaves `models` absent, which means "only this one".
-  const offered = models.length > 1 ? models : (previous?.models ?? []);
+  const offered = models.length > 1 ? models : (remembered?.models ?? []);
   return {
     kind,
     model,
     ...(offered.length > 0 ? { models: offered } : {}),
     apiKeyEnv,
     ...(baseUrl ? { baseUrl } : {}),
+    ...(api ? { api } : {}),
   };
 }
 
@@ -349,6 +348,11 @@ async function commandAdd(home: string, options: Options): Promise<void> {
     providerApiKeyEnv: keyEnvFlag ?? previous?.providerApiKeyEnv ?? DEFAULT_KEY_ENV[engine],
     ...((noteFlag ?? previous?.note) === undefined ? {} : { note: (noteFlag ?? previous?.note) as string }),
   };
+
+  // Validate before anything is written. `saveRegistry` only serializes, so
+  // without this a route that cannot boot (an unknown one with no endpoint)
+  // would be persisted and only fail much later, inside the harness.
+  normalizeProvider(entry.provider, `harness "${name}"`);
 
   const pluginPath = resolve(flag(options, 'plugin') ?? defaultPluginPath());
   const materialized = await materializeProfile(home, entry, { pluginPath });

@@ -11,7 +11,7 @@
  * Usage: node --experimental-strip-types --no-warnings test/model-catalog.test.ts
  */
 import { mergeProfilePatch, profilePatchYml } from '../src/materialize.ts';
-import { providerEnv } from '../src/launcher.ts';
+import { providerEnv } from '../src/registry.ts';
 import { catalogModelId, modelMap, normalizeRegistry, providerModels, type HarnessEntry } from '../src/registry.ts';
 
 const CLAUDE_MODELS = [

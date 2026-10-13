@@ -17,7 +17,7 @@
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { harnessProfileDir, providerModels, PROVIDER_BASE_URLS, type HarnessEntry } from './registry.ts';
+import { harnessProfileDir, providerApi, providerModels, PROVIDER_BASE_URLS, type HarnessEntry } from './registry.ts';
 /** Bundles every harness-deck web profile loads. */
 export const WEB_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] as const;
 
@@ -85,9 +85,14 @@ export function mergeProfilePatch(generated: string, existing: string): string {
       blocks.push(block.text);
       continue;
     }
-    // The user's model choice survives; the offered list is ours.
+    // The user's model choice survives; the offered list is ours. The *route*
+    // does not survive: when the harness was re-registered on another provider,
+    // the block on disk still names the old one, and keeping it would leave the
+    // engine calling a route that is no longer configured.
     if (block.id === 'agent-default-model') {
-      blocks.push(onDisk);
+      const generatedRoute = providerOf(generatedSplit.blocks, 'llm-pi-ai');
+      const diskRoute = providerOf(existingSplit.blocks, 'llm-pi-ai');
+      blocks.push(generatedRoute !== undefined && diskRoute !== undefined && generatedRoute !== diskRoute ? block.text : onDisk);
       continue;
     }
     if (block.id === 'llm-pi-ai') {
@@ -133,6 +138,12 @@ function indexPatchBlocks(blocks: PatchBlock[]): Map<string, string> {
  * @returns the merged row.
  */
 export function mergeProviderRoute(generated: string, onDisk: string): string {
+  // Switching route replaces the block outright. None of the old block belongs
+  // to the new provider: its keys describe an endpoint and a credential that no
+  // longer apply. The old `models:` list would be worse still — pi-ai refuses a
+  // model whose route it cannot place, so leaving it would keep the harness from
+  // booting on the route it now declares.
+  if (routeProvider(onDisk) !== routeProvider(generated)) return generated;
   const generatedModels = extractModelsList(generated);
   const diskModels = extractModelsList(onDisk);
   if (generatedModels === undefined || diskModels === undefined) return onDisk;
@@ -192,6 +203,22 @@ function extractModelsList(block: string): ModelsList | undefined {
  * and treating it as an "extra" would splice the row into itself on the second
  * merge. Returned as raw lines so a nested key keeps its own indentation.
  */
+/** The route a generated `llm-pi-ai` block declares, by block id. */
+function providerOf(blocks: readonly PatchBlock[], id: string): string | undefined {
+  const block = blocks.find((candidate) => candidate.id === id);
+  return block === undefined ? undefined : routeProvider(block.text);
+}
+
+/** The route a `llm-pi-ai` block describes, or undefined when it is unreadable. */
+function routeProvider(block: string): string | undefined {
+  const lines = block.split('\n');
+  for (const line of lines) {
+    const match = /^\s+([a-z0-9][a-z0-9-]*):\s*$/.exec(line);
+    if (match !== null && line.search(/\S/) === 6) return match[1];
+  }
+  return undefined;
+}
+
 function routeExtras(onDisk: string, diskModels: ModelsList): string[] {
   const ours = new Set(['apiKeyEnv', 'api', 'baseURL']);
   const lines = onDisk.split('\n');
@@ -319,6 +346,7 @@ export function profilePatchYml(entry: HarnessEntry): string {
   if (entry.provider) {
     const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
     const provider = entry.provider;
+    const api = providerApi(provider.kind, provider.api);
     // Every offered model is registered, not just the default: the DSH model
     // selector is built from `llm.listModels()` (`dsh-api-session-controller`,
     // `buildModelCatalog`), so a provider that advertises one model offers
@@ -346,8 +374,10 @@ export function profilePatchYml(entry: HarnessEntry): string {
       '    providers:',
       `      ${provider.kind}:`,
       `        apiKeyEnv: ${provider.apiKeyEnv}`,
-      '        api: openai-completions',
-      `        baseURL: ${baseUrl}`,
+      `        api: ${api}`,
+      // A route the catalog already describes carries its own base URL, so the
+      // line is omitted rather than invented; a declared endpoint always wins.
+      ...(baseUrl === undefined ? [] : [`        baseURL: ${baseUrl}`]),
       '        models:',
       ...modelRows,
       '',
