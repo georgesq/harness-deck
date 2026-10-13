@@ -105,7 +105,14 @@ O `home` também era recalculado, o que orfanaria as workspaces do harness.
 | [x] | `dsh` com `OPENROUTER_API_KEY`, sobe sem aviso de chave | `up dsh` → `pronto em http://127.0.0.1:3130` |
 | [x] | Os dois harnesses sobem e param limpos depois da reescrita | `up`/`down` de `claude` e `dsh`, portas 3131 e 3130 fechadas no fim |
 
-## 7. Fora de escopo (registrado para não voltar)
+## 7. Portas ocupadas fora do deck
+
+A porta 3100 aparece ocupada para o deck e **não** é de nenhum harness dele: é do PPC (processo do
+dono, outro projeto). Por isso o `dsh` usa 3130 e o `claude` 3131 — nenhum harness do deck disputa
+porta com ferramenta externa. O aviso de "porta em uso" do `up` está correto nesse caso; ele não
+sabe (nem deve saber) o que é o dono da porta.
+
+## 8. Fora de escopo (registrado para não voltar)
 
 - Daemon gerenciado pelo sistema operacional e o modo "sobreviver e reconectar": fora.
 - Durabilidade da fila além do que o DSH já grava: item B.5 da spec.
