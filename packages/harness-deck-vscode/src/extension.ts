@@ -37,6 +37,16 @@ import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './worksp
 /** Poll interval of the tree, in milliseconds. */
 const POLL_MS = 5000;
 
+/**
+ * How long `deactivate` may spend stopping harnesses.
+ *
+ * VS Code does not wait indefinitely for deactivation, and an overrun is worse
+ * than a partial stop: the harness stays up either way, but an overrun also
+ * delays the shutdown with no report. What does not fit in this budget is
+ * reported to the owner (REQ-L2/L3).
+ */
+const DEACTIVATE_BUDGET_MS = 10_000;
+
 let processes: HarnessProcesses | undefined;
 let proxy: HarnessProxy | undefined;
 let tree: HarnessTree | undefined;
@@ -163,9 +173,26 @@ async function startHarness(entry: HarnessEntry, silent = false): Promise<Harnes
 
 /** Stop a harness and update whatever is on screen. */
 async function stopHarness(entry: HarnessEntry): Promise<void> {
-  const stopped = await runtime().stop(entry);
-  if (!stopped) {
-    output?.appendLine(`[${entry.name}] nao ha processo desta janela para parar`);
+  const outcome = await runtime().stop(entry);
+  if (outcome.stale) {
+    // Never say "parado" while the port answers: that lie is the bug this whole
+    // path exists to remove.
+    const message =
+      `O harness "${entry.name}" nao parou: a porta ${entry.port} continua respondendo` +
+      (outcome.pid !== undefined ? ` (pid ${outcome.pid})` : '') +
+      '.';
+    output?.appendLine(`[${entry.name}] ${message}`);
+    void window.showWarningMessage(message, 'Ver log').then((choice: string | undefined) => {
+      if (choice === 'Ver log') void showLog(entry);
+    });
+  } else if (!outcome.stopped) {
+    output?.appendLine(`[${entry.name}] nao havia processo para parar`);
+  } else if (outcome.discovered) {
+    output?.appendLine(
+      `[${entry.name}] parado (${outcome.signal}); o dono da porta nao era o do pid file, pid ${String(outcome.pid)}`,
+    );
+  } else {
+    output?.appendLine(`[${entry.name}] parado (${outcome.signal})`);
   }
   updateHarnessPanel(entry, await runtime().inspect(entry));
   await refresh();
@@ -366,8 +393,23 @@ export async function deactivate(): Promise<void> {
   if (poller !== undefined) clearInterval(poller);
   proxy?.dispose();
   proxy = undefined;
+  // Closing the window has to take the harnesses with it: they were spawned
+  // detached, so nothing else would. `deactivate` gets a bounded budget — VS Code
+  // does not wait forever — and what did not fit is reported instead of being
+  // silently left running (REQ-L1/L2/L3).
   const stopOnExit = workspace.getConfiguration('harnessDeck').get<boolean>('stopOnExit', true);
-  if (stopOnExit) await processes?.stopAll();
+  if (!stopOnExit || processes === undefined) return;
+  const result = await processes.stopAll(DEACTIVATE_BUDGET_MS);
+  if (result.stopped.length > 0) {
+    output?.appendLine(`[harness-deck] encerrados no fechamento: ${result.stopped.join(', ')}`);
+  }
+  if (result.survivors.length > 0) {
+    const message =
+      `Estes harnesses continuam rodando em segundo plano: ${result.survivors.join(', ')}. ` +
+      'Rode `harness-deck down` (ou pare pela paleta de comandos) para encerrar.';
+    output?.appendLine(`[harness-deck] ${message}`);
+    void window.showWarningMessage(message);
+  }
 }
 
 /** Exported for the smoke test: render the panel HTML without VS Code. */

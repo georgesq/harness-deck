@@ -47,7 +47,7 @@
         "harnessDeck.stopOnExit": {
           "type": "boolean",
           "default": true,
-          "description": "Encerrar, ao fechar o VS Code, os harnesses que esta extensao subiu (nao toca em processo que voce subiu a mao)."
+          "description": "Encerrar, ao fechar o VS Code, os harnesses que esta janela subiu — o processo e os filhos dele. Desligado, o harness continua em segundo plano e so `harness-deck down` encerra."
         },
         "harnessDeck.openSystemBrowser": {
           "type": "boolean",
@@ -196,11 +196,12 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "watch": "tsc -p tsconfig.json --watch",
-    "test": "node test/smoke.mjs",
-    "package": "node build-package.mjs"
+    "build": "npm run sync-shared && node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "watch": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --watch",
+    "test": "npm run build && node test/lifecycle.test.mjs && node test/smoke.mjs",
+    "package": "node build-package.mjs",
+    "sync-shared": "node ../harness-deck-launcher/scripts/sync-shared.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

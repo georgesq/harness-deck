@@ -16,10 +16,22 @@ export class HarnessNode extends TreeItem {
     readonly state: HarnessState | undefined,
   ) {
     super(entry.name, TreeItemCollapsibleState.None);
-    const status = state?.listening === true ? 'no ar' : state?.managed === true ? 'subindo' : 'parado';
+    // A listener the pid file does not explain is an orphan: showing it as a
+    // healthy "no ar" would hide the harness this window cannot account for.
+    const orphan = state?.portOwner;
+    const status =
+      orphan !== undefined
+        ? `órfão (pid ${orphan.pid})`
+        : state?.listening === true
+          ? 'no ar'
+          : state?.managed === true
+            ? 'subindo'
+            : 'parado';
     this.description = `${entry.engine} · porta ${entry.port} · ${status}`;
     this.contextValue = state?.listening === true ? 'harnessRunning' : 'harnessStopped';
-    this.iconPath = new ThemeIcon(state?.listening === true ? 'circle-filled' : 'circle-outline');
+    this.iconPath = new ThemeIcon(
+      orphan !== undefined ? 'warning' : state?.listening === true ? 'circle-filled' : 'circle-outline',
+    );
     this.tooltip = [
       `harness: ${entry.name}`,
       `engine:  ${entry.engine}`,
@@ -27,6 +39,9 @@ export class HarnessNode extends TreeItem {
       `DSH_HOME: ${state?.entry.home ?? '(padrao do deck)'}`,
       entry.note !== undefined ? `nota:    ${entry.note}` : undefined,
       state?.pid !== undefined ? `pid:     ${state.pid}` : undefined,
+      orphan !== undefined
+        ? `órfão:   pid ${orphan.pid} responde na porta (achado por ${orphan.via}); o pid file não explica`
+        : undefined,
       state?.url !== undefined ? `url:     ${state.url}` : undefined,
       entry.provider !== undefined ? `modelo:  ${entry.provider.kind}/${entry.provider.model}` : undefined,
     ]
