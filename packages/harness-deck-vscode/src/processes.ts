@@ -33,6 +33,14 @@ import {
 /** How long `start` waits for the GUI port before giving up. */
 const READY_TIMEOUT_MS = 60_000;
 
+/** What a `stopAll` managed to take down, and what it had to leave behind. */
+export interface StopAllResult {
+  /** Harnesses that are down now. */
+  stopped: string[];
+  /** Harnesses that were up and are still up — the harness had to be reported. */
+  survivors: string[];
+}
+
 /** Runtime state of one harness. */
 export interface HarnessState {
   entry: HarnessEntry;
@@ -316,17 +324,36 @@ export class HarnessProcesses {
    * @param budgetMs - total time this may take before giving up.
    * @returns the outcome per harness and the entries that did not finish.
    */
-  async stopAll(budgetMs = 10_000): Promise<{ stopped: string[]; survivors: string[] }> {
+  async stopAll(budgetMs = 10_000, registered: readonly HarnessEntry[] = []): Promise<StopAllResult> {
     const deadline = Date.now() + budgetMs;
     const stopped: string[] = [];
     const survivors: string[] = [];
-    for (const entry of this.managedEntries()) {
+    // `startedByUs` only knows what THIS window started. Closing the window after
+    // a reload, a reinstall or a second window would leave the harness of the
+    // former window running, which is the orphan the tree view already flags.
+    // The registry tells us which ports belong to the deck; a listener on one of
+    // them is ours to stop, whoever started it.
+    const candidates = new Map<string, HarnessEntry>();
+    for (const entry of registered) candidates.set(entry.name, entry);
+    for (const entry of this.managedEntries()) candidates.set(entry.name, entry);
+    for (const entry of candidates.values()) {
       const left = deadline - Date.now();
       if (left <= 0) {
         survivors.push(entry.name);
         continue;
       }
       const outcome = await this.stop(entry, Math.min(left, 8000));
+      // A harness that was already down is a no-op, not a failure: calling it a
+      // survivor would put a warning on screen for a window that closed clean.
+      // The pid file counts as up even with the port closed — a harness still
+      // starting has the file and no listener yet.
+      const pidFile = await readPid(harnessPidPath(this.deckHome, entry));
+      const alive =
+        outcome.stopped ||
+        outcome.signal !== 'none' ||
+        (await portListening(entry.port)) ||
+        (pidFile !== undefined && processAlive(pidFile));
+      if (!alive) continue;
       if (outcome.stopped) stopped.push(entry.name);
       else survivors.push(entry.name);
     }

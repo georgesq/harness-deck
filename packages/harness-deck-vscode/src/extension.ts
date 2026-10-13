@@ -456,7 +456,9 @@ export async function deactivate(): Promise<void> {
   // silently left running (REQ-L1/L2/L3).
   const stopOnExit = workspace.getConfiguration('harnessDeck').get<boolean>('stopOnExit', true);
   if (!stopOnExit || processes === undefined) return;
-  const result = await processes.stopAll(DEACTIVATE_BUDGET_MS);
+  // The registry goes along so a harness started by a former window — reload,
+  // reinstall, second window — is still this window's to stop.
+  const result = await processes.stopAll(DEACTIVATE_BUDGET_MS, await listHarnesses());
   if (result.stopped.length > 0) {
     output?.appendLine(`[harness-deck] encerrados no fechamento: ${result.stopped.join(', ')}`);
   }
