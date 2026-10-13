@@ -2,7 +2,7 @@
 
 Três defeitos que impediram o dono de usar o deck no VS Code. Um turno de implementação.
 
-**Status:** pronto para virar tarefa no Paperclip (não implementado)
+**Status:** contrato da implementação — em execução nesta sessão
 **Dono do problema:** georgesq · **Autor da spec:** sessão do mestre em 13/10/2026
 **Repositório:** `/home/georgesq/project/harness-deck` (branch de trabalho `chore/protocolo-contribuicao`, `main` é PR-only)
 **Leia antes:** [`docs/analise-inicial.md`](../docs/analise-inicial.md), [`docs/plano.md`](../docs/plano.md), [`docs/status.md`](../docs/status.md)
@@ -20,8 +20,9 @@ lado, cada um com isolamento próprio, e dá a cada um uma aba no VS Code. Três
 | Painel VS Code | `packages/harness-deck-vscode` | Lista os harnesses, sobe/para e abre a GUI de cada um numa aba. |
 | Ponte Claude Code | `packages/harness-deck-claude-code` | Plugin do DSH que **substitui o motor** `dsh-agent-loop` por uma ponte ACP para o `claude-agent-acp`. |
 
-O dono estava usando o deck no VS Code e parou por dois motivos. Os dois são reais e estão
-reproduzidos abaixo com evidência.
+O dono estava usando o deck no VS Code e parou por três motivos, todos reproduzidos abaixo com
+evidência. Esta spec é o **contrato da tarefa**: os requisitos numerados são o que a implementação
+tem de cumprir e cada um traz a verificação ao lado.
 
 **Regras do repositório que valem para a implementação:** português do Brasil em documento e
 relatório, **inglês** em código/comentário/commit; Conventional Commits e commit por caminho (nunca
@@ -306,3 +307,58 @@ reconectar na próxima janela (é outra feature; se o dono quiser, vira item pr�
 - O **B.5** (retomada de sessão) é o que daria durabilidade à fila; aqui **não** entra.
 - Este spec não muda o desenho do deck: continuam uma `DSH_HOME` por harness, sessões separadas por
   harness e workspaces registrados por harness (`harness-deck workspace ...`).
+
+---
+
+## 9. Estado da execução (13/10/2026, sessão do mestre)
+
+O dono revogou o registro no Paperclip ("acho que é furada colocar pele PPC, por que ele vai
+chamar o HD que é justamente onde estamos ajustando") e autorizou modo yolo: a spec passou a ser o
+**contrato da implementação**, executada nesta sessão. Problemas 1 e 3 estão fechados; o problema 2
+segue na ponte.
+
+### 9.1 O que foi entregue
+
+| Requisito | Onde | Como foi verificado |
+| --- | --- | --- |
+| REQ-P1 | `packages/harness-deck-launcher/src/process.ts` (`stopProcess`) | `test/stop.test.ts` caso 1: porta fecha, processo morre, pid file sai |
+| REQ-P2 | idem | `test/stop.test.ts` caso 6 e `test/lifecycle.test.mjs` caso 6: no-op honesto, `stopped: false` |
+| REQ-P3 | `stopProcess` (a porta decide) | `test/stop.test.ts` caso 2 e `test/lifecycle.test.mjs` caso 5: pid file morto + porta viva ⇒ dono descoberto |
+| REQ-L1 | `processes.ts` (`stop`, `stopAll`) + `extension.ts` (`deactivate`) | `test/lifecycle.test.mjs` caso 1: pai e filho mortos, porta fechada |
+| REQ-L2 | `waitForStopped` + `DEACTIVATE_BUDGET_MS` | `test/stop.test.ts` caso 4 (SIGTERM ignorado ⇒ SIGKILL); `test/lifecycle.test.mjs` caso 4 |
+| REQ-L3 | `deactivate` avisa os sobreviventes | `extension.ts:369-380` — aviso com a lista; sem teste automatizado (depende do host do VS Code) |
+| REQ-L4 | `findPortOwner` (`lsof -t -sTCP:LISTEN` → `fuser -n tcp`) | `test/stop.test.ts` caso 8; `test/lifecycle.test.mjs` caso 3 |
+| REQ-L5 | `removePidFile` best-effort | `test/stop.test.ts` caso 7 (diretório somente leitura) |
+| REQ-L7 | `portListening` no veredito, não `kill(pid, 0)` | todos os casos acima: o veredito é `!processAlive && !portListening` |
+| REQ-L8 | `killTree` (grupo do processo, `-pid`) | `test/stop.test.ts` caso 5 e `test/lifecycle.test.mjs` caso 1 |
+
+Um módulo só resolve a parada dos dois front ends: `packages/harness-deck-launcher/src/process.ts` é
+a cópia canônica e `packages/harness-deck-vscode/src/shared/process.ts` é copiada dele por
+`scripts/sync-shared.mjs` (rodado pelo `build` dos dois pacotes). `test/shared-copy.test.ts` falha
+quando as duas divergem — é o que impede o CLI e o painel de discordarem sobre o que é "parado".
+
+### 9.2 Achado novo — a raiz do deck está em sistema de arquivos somente leitura
+
+`findmnt -T ~/.harnessdeck/.run` devolve `ext4 ro,nosuid,nodev` (`/dev/sdd` montado em `/`), e
+`touch ~/.harnessdeck/.run/claude/teste-w` falha com `Read-only file system`. Consequência prática:
+o `down` **para** o harness (porta fecha, processo morre), mas não consegue apagar o pid file, e os
+dois pids velhos (`claude` 394127, `dsh` 707115) ficam no disco. Antes desta correção esse EROFS
+derrubava o comando inteiro com `erro: EROFS`; agora é aviso.
+
+Isso é do ambiente, não do código: exige `sudo mount -o remount,rw /` da parte do dono. Enquanto o
+sistema estiver `ro`, **nenhum** harness consegue subir pelo deck (o `start` escreve pid file e log),
+então é o primeiro item a resolver antes do teste de fumaça real.
+
+### 9.3 Provas colhidas no ambiente real
+
+```
+$ node --experimental-strip-types --no-warnings src/cli.ts list
+claude           claude-code  porta 3131   parado   pid 394127
+dsh              dsh          porta 3130   parado   pid 707115
+
+$ /usr/bin/ss -ltnp | grep 3131      # nada: a porta que ficou presa em 13/10 está fechada
+```
+
+O `list` acima já é o código novo: antes ele diria "no ar" para um pid morto com a porta respondendo.
+A porta 3131 que motivou o problema 1 não responde mais, e o `down` agora nomeia o dono quando o pid
+file não explica a porta.
