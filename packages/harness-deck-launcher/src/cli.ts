@@ -255,13 +255,13 @@ function buildProvider(options: Options): HarnessProvider {
   if (kind !== 'openrouter' && kind !== 'deepseek') {
     fail(`--provider aceita "openrouter" ou "deepseek", não "${String(kind)}"`);
   }
-  const model = flag(options, 'model') ?? DEFAULT_PROVIDER.model;
+  const models = options.flags.get('model') ?? [];
+  const model = models[0] ?? DEFAULT_PROVIDER.model;
   const apiKeyEnv = flag(options, 'key-env') ?? PROVIDER_KEY_ENV[kind];
   const baseUrl = flag(options, 'base-url');
   // `--model` repeated builds the list the DSH model selector offers; the
   // first one is also the harness' starting model. A single `--model` (or
   // none) leaves `models` absent, which means "only this one".
-  const models = options.flags.get('model') ?? [];
   const offered = models.length > 1 ? models : [];
   return {
     kind,
