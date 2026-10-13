@@ -20,7 +20,8 @@ Funciona de ponta a ponta para **um harness por processo**, aberto no navegador 
 
 Verificado: os dois harnesses sobem, o painel abre cada um na própria aba, a escolha de modelo
 sobrevive a reinício e uma mensagem no chat completa com o modelo configurado. O que está pronto,
-o que foi verificado e o que falta: [docs/status.md](docs/status.md).
+o que foi verificado e o que falta: [docs/status.md](docs/status.md). O que cada harness oferece de
+skill, plugin, MCP e subagente — e o que ainda não chega: [docs/capacidades-por-harness.md](docs/capacidades-por-harness.md).
 
 ## Objetivo
 
