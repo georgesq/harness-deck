@@ -44,6 +44,23 @@ checks.push(['is idempotent', again === merged]);
 const dsh = { ...claude, name: 'dsh', engine: 'dsh', provider: undefined } as unknown as HarnessEntry;
 checks.push(['keeps an empty patch empty', mergeProfilePatch(profilePatchYml(dsh), profilePatchYml(dsh)).endsWith('[]\n')]);
 
+// Switching the provider is the case the deck exists for: a machine on a
+// network where OpenRouter does not answer has to be able to move to another
+// route. Nothing of the old route may survive — not the endpoint, not the
+// credential variable, not the model list, and not the route named in
+// `agent-default-model`, which would otherwise keep the engine on a provider
+// that is no longer configured.
+const switched = { ...claude, provider: { ...claude.provider!, kind: 'ollama', model: 'qwen3-coder:30b', apiKeyEnv: 'LLM_API_KEY', baseUrl: 'http://127.0.0.1:11434/v1' } } as unknown as HarnessEntry;
+const afterSwitch = mergeProfilePatch(profilePatchYml(switched), generated);
+checks.push(['a troca de rota remove o provedor antigo', !afterSwitch.includes('openrouter')]);
+checks.push(['a troca de rota grava o provedor novo', afterSwitch.includes('provider: ollama')]);
+checks.push(['a troca de rota grava o endpoint novo', afterSwitch.includes('baseURL: http://127.0.0.1:11434/v1')]);
+checks.push(['a troca de rota grava o modelo novo', afterSwitch.includes('model: qwen3-coder:30b')]);
+
+// Same route: the user's model choice is still the user's.
+const sameRoute = mergeProfilePatch(profilePatchYml(claude), edited);
+checks.push(['mesma rota mantém o modelo escolhido', sameRoute.includes('model: anthropic/claude-sonnet-4.5')]);
+
 let failed = 0;
 for (const [label, pass] of checks) {
   if (!pass) failed += 1;

@@ -3,10 +3,35 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 16:32 (America/Sao_Paulo)
+**Última atualização:** 2026-10-12 20:50 (America/Sao_Paulo)
 
 ## Agora
 
+- [x] **Item B.4 — completo: a ferramenta pede permissão e roda (ou é recusada).** O bridge não
+  registrava handler para `session/request_permission`, que é método do **cliente** ACP: a conexão
+  respondia `Method not found: session/request_permission` e a ferramenta morria ali, sem nomear a
+  causa em lugar nenhum. Sintoma para o dono: pedir uma pesquisa e não acontecer nada. Agora o
+  handler roteia a pergunta para o serviço `approval` do DSH — quem decide é o painel da GUI, a
+  pergunta e o desfecho entram no log de auditoria da sessão, e o preset de sandbox/aprovação
+  escolhido continua valendo. **Só `allowed-once` vira permissão**; `rejected`, `cancelled` e o
+  `unavailable` (fail-closed) viram `cancelled` no ACP, então serviço ausente é recusa, nunca
+  liberação silenciosa. **Verificado rodando os dois caminhos:** busca aprovada → `Completed in 14s`
+  com fontes reais (Meelion, Boca, Investing.com); busca recusada → `Completed in 4s` com "a
+  pesquisa na web foi abortada antes de rodar", e **zero** `Method not found` no log.
+- [x] **Lista de modelos do harness vem do registro (decisão do dono em 12/10/2026).** O seletor do
+  DSH é montado de `llm.listModels()` (`dsh-api-session-controller`, `buildModelCatalog`), então um
+  harness que registrava **um** modelo oferecia exatamente uma escolha. O registro ganhou
+  `provider.models` (a lista) sem perder `provider.model` (o modelo inicial); registro sem a lista
+  se comporta como antes. O harness `claude` passou a oferecer **10 modelos OpenRouter**, medidos no
+  DOM do seletor real — não por suposição. **Default agora é o `anthropic/claude-haiku-5.5`**
+  (pedido do dono).
+- [x] **O modelo escolhido no seletor passou a valer de verdade.** O bridge repassava um id de
+  catálogo e o CLI resolvia o alias por conta própria: o log mostrava `phase=set-model model=sonnet`
+  e o Claude Code rodava **Opus** independentemente do que o seletor mostrava — era o "abre sempre no
+  Opus". Agora o bridge aplica a escolha na sessão ACP (`session/set_config_option`), e um slug fora
+  do registro é recusado em voz alta em vez de virar Opus em silêncio.
+- [ ] **Rotacionar a chave do OpenRouter** — ela foi impressa em texto puro no transcript desta
+  sessão. Colar a chave nova em `~/.harnessdeck/.env` (arquivo já criado, modo `600`, campo vazio).
 - [x] **Autorizações do dono em 12/10/2026:** (1) escrever a raiz de dados real em
   `~/.harnessdeck`; (2) entrar no item 2.4 (painel do VS Code).
 - [x] **Raiz real em uso.** O registro saiu do diretório de teste e vive em
@@ -25,7 +50,7 @@
   `node build-package.mjs` (o `.vsix` é um zip com as entradas sob `extension/`, então não precisa de
   ferramenta de terceiro) e **instalado no VS Code do dono** como `georgesq.harness-deck-vscode@0.1.0`;
   a aba **Harness Deck** apareceu na barra após recarregar a janela. Teste sem VS Code:
-  `node test/smoke.mjs`; teste do lançador: `npm test` (duas suítes).
+  `node test/smoke.mjs`; teste do lançador: `npm test` (três suítes: merge do patch, catálogo de modelos e workspaces).
 - [x] **Workspace por harness (defeito de uso corrigido).** O dono não conseguia apontar uma pasta
   nova para o harness que queria: a GUI só registra pasta no harness da porta aberta, e uma
   `DSH_HOME` por harness (REQ-02) faz cada harness ter a sua lista. Entrou
@@ -67,11 +92,53 @@ Verificado no código: `AgentDefaultModelConfig.saveSelection` grava via o servi
 porque cada harness tem o seu `DSH_HOME`.
 
 **Defeito de produto corrigido no caminho:** o lançador regerava o `cordis.patch.yml` inteiro a cada
-`up`, o que **desfazia silenciosamente** a escolha do dono, voltando ao default do registro. Agora as
-linhas `agent-default-model` e `llm-pi-ai` pertencem ao harness que já rodou: o registro só as semeia
-na primeira materialização e atualiza o resto. Coberto por `packages/harness-deck-launcher/test/merge-patch.test.ts`
-(9 verificações, incluindo idempotência) e conferido na raiz real: troquei o modelo no perfil do
-`claude`, subi com `up` e a escolha sobreviveu.
+`up`, o que **desfazia silenciosamente** a escolha do dono, voltando ao default do registro. Hoje as
+duas linhas são tratadas de forma diferente, porque não são igualmente nossas:
+
+- `agent-default-model` é **inteiramente do harness**: o `model` é o que o dono escolheu no seletor,
+  então a linha do disco vence.
+- `llm-pi-ai` é **meio nossa**: a lista `models` é configuração (muda quando o registro muda) e é
+  sempre regerada; o resto da rota é do harness e é preservado.
+
+Coberto por `packages/harness-deck-launcher/test/merge-patch.test.ts` (9 verificações) e
+`test/model-catalog.test.ts` (35, incluindo os dois defeitos do merge descritos abaixo) — e conferido
+na raiz real: troquei o modelo no perfil do `claude`, subi com `up` e a escolha sobreviveu.
+Contagem reconferida em 13/10/2026 (`grep -c '^ok'` em cada suíte).
+
+## Sessões **não** são compartilhadas entre harnesses (registrado em 13/10/2026)
+
+Pergunta do dono: *"as mensagens que o projeto trafega no claude, se eu for no mesmo projeto com o
+dsh, elas são compartilhadas, ou separadas?"* Resposta: **separadas**. Mesmo projeto, harness
+diferente, nada trafega de um para o outro — e isso é desenho, não defeito pendente.
+
+O que separa as conversas é a **`DSH_HOME`**, não o projeto. O caminho da pasta é só a chave que
+agrupa sessões **dentro** daquele harness; cada harness tem a própria `DSH_HOME`, logo o próprio
+banco de sessões, a própria lista de workspaces e o próprio token.
+
+| | harness `claude` | harness `dsh` |
+|---|---|---|
+| Raiz | `~/.harnessdeck/homes/claude` | `~/.harnessdeck/homes/dsh` |
+| Transcrição | `sessions/` e `storages/session_projcache/` — **26** sessões | idem — **11** sessões |
+| Ids | `session-b075165a…` (`harness-deck`), `session-a58ed007…` (`saas-hiperlocal-backend`) | `session-56428f87…` (`harness-deck`), `session-fd72c854…` (`lia`) |
+
+Verificado na raiz real em 13/10/2026: o projeto `harness-deck` está registrado como workspace nos
+**dois** harnesses, com sessões **diferentes** em cada um, e nenhum id de sessão se repete entre os
+dois. O `saas-hiperlocal-backend` aparece no `claude` com uma sessão e no `dsh` com zero.
+
+Segunda camada no caso do `claude`: as mensagens saem pelo subprocesso `claude-agent-acp`, que
+mantém o contexto dele no `~/.claude`. Copiar a pasta de sessões **não** levaria esse histórico
+junto — o `dsh` não tem esse lado.
+
+Consequências aceitas:
+
+- **Ganha-se** usar o mesmo projeto com dois motores sem um enxergar o estado do outro (é o REQ-02
+  funcionando).
+- **Perde-se** continuidade entre harnesses. O que sobrevive hoje é o que está em arquivo — o
+  `~/.dsh/AGENTS.md`, as skills e os `.md` do projeto —, não a conversa.
+- **Compartilhar de verdade** exigiria mudar o desenho: (a) uma `DSH_HOME` compartilhada por dois
+  perfis, que quebra o isolamento de workspace e de token, ou (b) export/import de sessão entre
+  harnesses, que precisa tratar o histórico do ACP à parte. **Nenhum dos dois está implementado**, e
+  nenhum está no escopo atual.
 
 ## Credenciais: `<raiz>/.env` é a única fonte (decidido em 12/10/2026)
 
@@ -240,13 +307,18 @@ F2 (o alvo é DSH + Claude Code), mas fecha a porta para "dois DSH lado a lado" 
 
 ## Defeitos reais encontrados e corrigidos nesta rodada
 
-Sete erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles visível por leitura:
+Oito erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles visível por leitura:
 
 1. **Duas cópias do `cordis`.** O plugin tinha `@deepseek-ai/cordis` e `dsh-*` instalados em
    `node_modules/` próprios e resolvia a própria cópia, o que quebra o registro de serviço do DSH.
    Numa instalação real o plugin resolve as cópias compartilhadas do perfil
    (`profiles/node_modules/@deepseek-ai/*`, que já são links para a instalação do DSH); no ambiente
    de desenvolvimento os links foram apontados para a mesma instalação.
+   **Aplicado de novo em 12/10/2026** para o `dsh-user-approval` (B.4): symlink para
+   `/usr/local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-user-approval`, nunca
+   cópia própria. **Pendência declarada:** esse pacote **não está no `package.json`** do plugin —
+   é dependência de API interna e o AGENTS.md manda isolá-la numa camada só (item 3.4 do
+   [plano.md](plano.md)).
 2. **`cannot get property "sessions" without inject`** ao criar sessão. `this.ctx.sessions` era
    resolvido no contexto do **chamador**, que não declara o `inject`. O motor padrão do DSH resolve
    isso guardando o contexto num *holder* simples — comentário literal em
@@ -277,6 +349,31 @@ Sete erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles 
    `scopeOf(agent.ctx) === agent` (`dsh-client-file-upload/lib/index.js:297`) e, com uma chave
    qualquer, o primeiro prompt é recusado. O rótulo que chega à tela não nomeia o serviço nem a
    causa. Lição: **escopo de agente no DSH não é só "ter escopo" — é ter o agente como chave.**
+8. **`Method not found: session/request_permission` — a ferramenta nunca rodava (12/10/2026).** O
+   bridge traduzia só o que o ACP **manda** (`session/update`) e esquecia o que o ACP **pergunta**:
+   `session/request_permission` é método do **cliente**, e sem handler registrado o SDK responde
+   `Method not found`. O sintoma que chegava ao dono era "pedi uma pesquisa e não aconteceu nada",
+   sem nome de serviço nem causa. Corrigido com `onRequest(...requestPermission, ...)` roteando para
+   o serviço `approval` do DSH. Lição, irmã da do item 4: **substituir o motor não é só reanexar os
+   eventos que ele emite — é também responder às perguntas que ele respondia.**
+
+## Defeito do merge do perfil, encontrado rodando (12/10/2026)
+
+A lista de modelos não chegava ao perfil e nada acusava erro. Eram **dois** defeitos na mesma
+função, e o segundo só apareceu depois de corrigir o primeiro:
+
+1. **A linha `llm-pi-ai` inteira era preservada do disco.** O merge tratava a linha toda como
+   propriedade do harness (por causa da escolha de modelo do dono), então uma lista adicionada ao
+   registro depois nunca alcançava o perfil. Agora o merge é **parcial**: a lista `models` é nossa e
+   é regerada; o resto da rota é do harness e é preservado.
+2. **A estrutura da própria linha virava "chave extra".** O coletor de chaves extras varria o bloco
+   inteiro e capturava `id`, `name` e `config`, enxertando a linha dentro dela mesma — o segundo `up`
+   duplicava o bloco. Agora só os **filhos diretos da rota do provedor** (o nível do `apiKeyEnv`) são
+   considerados.
+
+Os dois estão cobertos por regressão em
+[test/model-catalog.test.ts](../packages/harness-deck-launcher/test/model-catalog.test.ts)
+(41 verificações, incluindo "um perfil antigo ganha a lista nova" e "a atualização é idempotente").
 
 ## Como o lançador monta um harness (item 2.1)
 

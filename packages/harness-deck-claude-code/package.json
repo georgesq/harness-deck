@@ -19,7 +19,8 @@
     "lib/index.d.ts"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --no-warnings test/bridge-loop.test.ts && node --experimental-strip-types --no-warnings test/acp-control.test.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",

@@ -135,14 +135,25 @@ declare module 'vscode' {
     showInformationMessage(message: string, ...items: string[]): Thenable<string | undefined>;
     showWarningMessage(message: string, ...items: string[]): Thenable<string | undefined>;
     showErrorMessage(message: string, ...items: string[]): Thenable<string | undefined>;
-    showInputBox(options?: { prompt?: string; value?: string; placeHolder?: string }): Thenable<string | undefined>;
+    showInputBox(options?: {
+      prompt?: string;
+      value?: string;
+      placeHolder?: string;
+      title?: string;
+      ignoreFocusOut?: boolean;
+      validateInput?: (value: string) => string | undefined | null;
+    }): Thenable<string | undefined>;
     showQuickPick(
       items: readonly string[] | Thenable<readonly string[]>,
-      options?: { placeHolder?: string },
+      options?: { placeHolder?: string; title?: string; ignoreFocusOut?: boolean },
     ): Thenable<string | undefined>;
     showQuickPick<T extends { label: string }>(
       items: readonly T[] | Thenable<readonly T[]>,
-      options?: { placeHolder?: string; canPickMany?: boolean },
+      options: { placeHolder?: string; title?: string; ignoreFocusOut?: boolean; canPickMany: true },
+    ): Thenable<readonly T[] | undefined>;
+    showQuickPick<T extends { label: string }>(
+      items: readonly T[] | Thenable<readonly T[]>,
+      options?: { placeHolder?: string; title?: string; ignoreFocusOut?: boolean; canPickMany?: false },
     ): Thenable<T | undefined>;
     showOpenDialog(options: {
       canSelectFolders?: boolean;

@@ -15,8 +15,9 @@
   },
   "scripts": {
     "start": "node --experimental-strip-types --no-warnings src/cli.ts",
-    "test": "node --experimental-strip-types --no-warnings test/merge-patch.test.ts && node --experimental-strip-types --no-warnings test/workspaces.test.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit --typeRoots ../harness-deck-claude-code/node_modules/@types"
+    "test": "node --experimental-strip-types --no-warnings test/merge-patch.test.ts && node --experimental-strip-types --no-warnings test/model-catalog.test.ts && node --experimental-strip-types --no-warnings test/workspaces.test.ts && node --experimental-strip-types --no-warnings test/add.test.ts && node --experimental-strip-types --no-warnings test/shared-copy.test.ts && node --experimental-strip-types --no-warnings test/stop.test.ts",
+    "typecheck": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit --typeRoots ../harness-deck-claude-code/node_modules/@types",
+    "sync-shared": "node scripts/sync-shared.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

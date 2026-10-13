@@ -17,17 +17,23 @@ import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  credentialEnv,
   DEFAULT_HARNESS_DECK_HOME,
+  DEFAULT_KEY_ENV,
   DEFAULT_PROVIDER,
   HARNESS_DECK_HOME_ENV,
-  PROVIDER_KEY_ENV,
+  PROVIDER_BASE_URLS,
+  providerKeyEnv,
   RegistryError,
   envFilePath,
   findHarness,
   harnessHome,
+  harnessLogPath,
+  harnessUrl,
   harnessesHome,
   loadEnvFile,
   loadRegistry,
+  normalizeProvider,
   portOwner,
   registryPath,
   removeHarness,
@@ -42,8 +48,6 @@ import {
 import {
   LaunchError,
   appendLog,
-  harnessLogPath,
-  harnessUrl,
   inspect,
   inspectAll,
   startHarness,
@@ -59,12 +63,6 @@ const FIRST_PORT = 3100;
 
 /** Engine used when `add` gets no `--engine`. */
 const DEFAULT_ENGINE: HarnessEngine = 'dsh';
-
-/** Environment variable read for a credential, per engine, when none is given. */
-const DEFAULT_KEY_ENV: Record<HarnessEngine, string> = {
-  dsh: 'DEEPSEEK_API_KEY',
-  'claude-code': 'ANTHROPIC_API_KEY',
-};
 
 /** Where the plugin package lives, derived from this file's location. */
 function repoRootFromThisFile(): string {
@@ -141,7 +139,7 @@ const HELP = `harness-deck — registro e lançador de harness
 Uso:
   harness-deck list [--json]
   harness-deck add <nome> [--engine dsh|claude-code] [--port <porta>]
-                          [--provider openrouter|deepseek] [--model <id>]
+                          [--provider <rota>] [--model <id>]... [--api <protocolo>]
                           [--key-env <VAR>] [--base-url <url>] [--note <texto>]
                           [--dsh-home <dir>] [--force]
   harness-deck rm <nome> [--purge]
@@ -158,6 +156,18 @@ Flags globais:
   --home <dir>   raiz do harness-deck (padrão: $${HARNESS_DECK_HOME_ENV} ou ${DEFAULT_HARNESS_DECK_HOME})
   --json         saída em JSON (list, status)
   --plugin <dir> caminho do pacote harness-deck-claude-code
+
+--model pode ser repetido: a lista inteira é o que o seletor de modelo do DSH
+mostra dentro do harness, e o primeiro --model é o modelo inicial. Com um só
+--model o harness oferece apenas esse modelo. Sem nenhum --model, a lista
+lembrada é mantida; para zerar a lista, passe um --model.
+
+--provider aceita qualquer rota de LLM que o catálogo do DSH instalar conheça.
+Para openrouter, deepseek, anthropic, openai, google, ollama e lmstudio o deck já
+sabe a URL e o nome da variável da chave. Uma rota fora dessa lista — um gateway
+interno, por exemplo — precisa de --base-url e --api (openai-completions,
+anthropic-messages ou google-generative-ai). Trocar de rota com --force descarta
+a URL e a chave lembradas da rota anterior, a menos que você as repita.
 
 Cada harness é um perfil do DSH, um processo, uma porta e um DSH_HOME próprio
 (<raiz>/homes/<nome>). É o DSH_HOME que separa workspaces e sessões (REQ-02);
@@ -202,7 +212,15 @@ async function main(): Promise<void> {
 
 /** Render one line of the registry table. */
 function stateLine(state: HarnessState): string {
-  const status = state.listening ? 'no ar' : state.running ? 'subindo' : 'parado';
+  // A listener the pid file does not explain is an orphan, not a running
+  // harness: saying "no ar" there would hide the bug this status exists for.
+  const status = state.portOwner
+    ? `órfão ${state.portOwner.pid}`
+    : state.listening
+      ? 'no ar'
+      : state.running
+        ? 'subindo'
+        : 'parado';
   const pid = state.pid !== undefined ? String(state.pid) : '-';
   const url = state.listening ? harnessUrl(state.entry) : '';
   return [
@@ -234,35 +252,62 @@ async function commandList(home: string, options: Options): Promise<void> {
   for (const state of states) process.stdout.write(`${stateLine(state)}\n`);
 }
 
-/**
- * Environment variable that holds this harness' credential.
- *
- * The provider block wins (that is the route the DSH and the bridge actually
- * call); `providerApiKeyEnv` is the explicit per-harness override, and the
- * engine default is the last resort.
- */
-function credentialEnv(entry: HarnessEntry): string {
-  return entry.providerApiKeyEnv ?? entry.provider?.apiKeyEnv ?? DEFAULT_KEY_ENV[entry.engine];
-}
-
 /** Build the provider block of a new entry from the flags. */
-function buildProvider(options: Options): HarnessProvider {
-  const kind = (flag(options, 'provider') ?? DEFAULT_PROVIDER.kind) as HarnessProvider['kind'];
-  if (kind !== 'openrouter' && kind !== 'deepseek') {
-    fail(`--provider aceita "openrouter" ou "deepseek", não "${String(kind)}"`);
+function buildProvider(options: Options, previous?: HarnessProvider): HarnessProvider {
+  const kind = flag(options, 'provider') ?? previous?.kind ?? DEFAULT_PROVIDER.kind;
+  // Any route id is accepted: the installed pi-ai catalog owns that list and a
+  // deck running on a network without the usual provider has to be able to name
+  // another one (owner's decision of 13/10/2026). `normalizeProvider` enforces
+  // the shape, and asks a route outside the table for its `--base-url`/`--api`.
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(kind)) {
+    fail(`--provider aceita um id de rota, não "${kind}"`);
   }
-  const model = flag(options, 'model') ?? DEFAULT_PROVIDER.model;
-  const apiKeyEnv = flag(options, 'key-env') ?? PROVIDER_KEY_ENV[kind];
-  const baseUrl = flag(options, 'base-url');
+  const models = options.flags.get('model') ?? [];
+  const model = models[0] ?? previous?.model ?? DEFAULT_PROVIDER.model;
+  // Switching route drops what the old route remembered. A key variable and an
+  // endpoint belong to the provider they were set for: keeping them while the
+  // route changes is how a harness ends up sending the OpenRouter key to
+  // Anthropic. An explicit flag always wins.
+  const switched = previous !== undefined && previous.kind !== kind;
+  const remembered = switched ? undefined : previous;
+  const apiKeyEnv = flag(options, 'key-env') ?? remembered?.apiKeyEnv ?? providerKeyEnv(kind);
+  const baseUrl = flag(options, 'base-url') ?? remembered?.baseUrl ?? PROVIDER_BASE_URLS[kind];
+  const api = flag(options, 'api') ?? remembered?.api;
+  // `--model` repeated builds the list the DSH model selector offers; the
+  // first one is also the harness' starting model. The flag's PRESENCE decides,
+  // not its length: `--model a` means "offer a", while passing no `--model` at
+  // all keeps the remembered list. Deciding by length meant a single `--model`
+  // silently kept the whole previous list — unmarking a model in the panel did
+  // not remove it, and the harness kept offering what the owner had dropped.
+  const offered = models.length > 0 ? models : (remembered?.models ?? []);
   return {
     kind,
     model,
+    ...(offered.length > 0 ? { models: offered } : {}),
     apiKeyEnv,
     ...(baseUrl ? { baseUrl } : {}),
+    ...(api ? { api } : {}),
   };
 }
 
-/** Pick the port: the flag, or the first free one after the highest in use. */
+/**
+ * Pick the port: the flag, the port already registered, or the first free one.
+ *
+ * `--force` is for changing a field, not for losing the ones nobody mentioned:
+ * re-registering a harness to fix its key variable must not move it to another
+ * port (which is what a fresh allocation does) or away from the folder its
+ * workspaces live in.
+ *
+ * @param existing - entry already registered under this name, when there is one.
+ * @param flagValue - raw `--port`, when the caller passed it.
+ * @param used - ports taken by the other harnesses.
+ * @returns the port to register.
+ */
+function pickPort(existing: HarnessEntry | undefined, flagValue: string | undefined, used: HarnessEntry[]): number {
+  if (flagValue !== undefined) return Number.parseInt(flagValue, 10);
+  if (existing !== undefined) return existing.port;
+  return nextPort(used);
+}
 function nextPort(existing: HarnessEntry[]): number {
   const used = new Set(existing.map((entry) => entry.port));
   let candidate = FIRST_PORT;
@@ -281,27 +326,52 @@ async function commandAdd(home: string, options: Options): Promise<void> {
     fail(`--engine aceita "dsh" ou "claude-code", não "${engine}"`);
   }
   const registry = await loadRegistry(home);
-  if (findHarness(registry, name) !== undefined && !has(options, 'force')) {
+  const previous = findHarness(registry, name);
+  if (previous !== undefined && !has(options, 'force')) {
     fail(`harness "${name}" já existe (use --force para reescrever a entrada)`);
   }
   const portFlag = flag(options, 'port');
-  const port = portFlag !== undefined ? Number.parseInt(portFlag, 10) : nextPort(registry.harnesses);
+  const port = pickPort(previous, portFlag, registry.harnesses);
   if (!Number.isInteger(port) || port < 1 || port > 65535) fail(`--port inválido: "${String(portFlag)}"`);
   const clash = portOwner(registry, port, name);
   if (clash !== undefined) fail(`porta ${port} já é do harness "${clash.name}"`);
 
+  // A `--force` re-registration rewrites the entry, so every field the caller
+  // did not mention falls back to what was already registered rather than to
+  // the built-in default: `add --key-env X` is about the key, not about
+  // resetting the provider, the model list or the data folder.
+  const homeFlag = flag(options, 'dsh-home');
+  const baseUrlFlag = flag(options, 'base-url');
+  const noteFlag = flag(options, 'note');
+  const keyEnvFlag = flag(options, 'key-env');
+
+  // The provider wins over the engine when it names its own variable. This
+  // field is the harness' *answer* to "which variable holds the key", and a
+  // route carries the right answer: registering `--provider google` and then
+  // being told to export `DEEPSEEK_API_KEY` is how a `.env` with the key under
+  // its real name is never found. It stays absent when the provider already
+  // names one, so `credentialEnv` falls through to the route.
+  const provider = buildProvider(options, previous?.provider);
+  const providerApiKeyEnv = keyEnvFlag ?? (provider.apiKeyEnv === providerKeyEnv(provider.kind) ? undefined : previous?.providerApiKeyEnv);
   const entry: HarnessEntry = {
     name,
     profile: name,
-    home: flag(options, 'dsh-home') ?? join(harnessesHome(home), name),
+    home: homeFlag ?? previous?.home ?? join(harnessesHome(home), name),
     port,
     engine,
-    provider: buildProvider(options),
-    enabled: true,
-    ...(flag(options, 'base-url') ? { providerBaseUrl: flag(options, 'base-url') } : {}),
-    providerApiKeyEnv: flag(options, 'key-env') ?? DEFAULT_KEY_ENV[engine],
-    ...(flag(options, 'note') ? { note: flag(options, 'note') } : {}),
+    provider,
+    enabled: previous?.enabled ?? true,
+    ...((baseUrlFlag ?? previous?.providerBaseUrl) === undefined
+      ? {}
+      : { providerBaseUrl: (baseUrlFlag ?? previous?.providerBaseUrl) as string }),
+    ...(providerApiKeyEnv === undefined ? {} : { providerApiKeyEnv }),
+    ...((noteFlag ?? previous?.note) === undefined ? {} : { note: (noteFlag ?? previous?.note) as string }),
   };
+
+  // Validate before anything is written. `saveRegistry` only serializes, so
+  // without this a route that cannot boot (an unknown one with no endpoint)
+  // would be persisted and only fail much later, inside the harness.
+  normalizeProvider(entry.provider, `harness "${name}"`);
 
   const pluginPath = resolve(flag(options, 'plugin') ?? defaultPluginPath());
   const materialized = await materializeProfile(home, entry, { pluginPath });
@@ -391,11 +461,26 @@ async function commandDown(home: string, options: Options): Promise<void> {
   const entries = select(registry, options.positionals);
   for (const entry of entries) {
     const result = await stopHarness(home, entry);
-    if (!result.stopped) {
-      process.stdout.write(`${entry.name}: não estava rodando\n`);
+    if (result.stale) {
+      process.stdout.write(
+        `${entry.name}: NÃO parou — a porta ${entry.port} continua respondendo` +
+          (result.pid !== undefined ? ` (pid ${result.pid})` : '') +
+          `; o pid file ficou no lugar\n`,
+      );
       continue;
     }
-    process.stdout.write(`${entry.name}: parado (${result.signal})\n`);
+    if (!result.stopped) {
+      process.stdout.write(
+        `${entry.name}: não estava rodando${result.pidFileKept ? ' (o pid file não pôde ser removido: sistema de arquivos somente leitura)' : ''}\n`,
+      );
+      continue;
+    }
+    process.stdout.write(
+      `${entry.name}: parado (${result.signal}${result.discovered ? `, dono da porta descoberto: pid ${String(result.pid)}` : ''})\n`,
+    );
+    if (result.pidFileKept) {
+      process.stdout.write(`${entry.name}: aviso: o pid file não pôde ser removido (somente leitura)\n`);
+    }
   }
 }
 
@@ -419,6 +504,11 @@ async function commandStatus(home: string, options: Options): Promise<void> {
   process.stdout.write(`pid:      ${state.pid !== undefined ? state.pid : '-'}\n`);
   process.stdout.write(`processo: ${state.running ? 'vivo' : 'ausente'}\n`);
   process.stdout.write(`porta:    ${state.listening ? 'respondendo' : 'fechada'}\n`);
+  if (state.portOwner) {
+    process.stdout.write(
+      `dono:     pid ${state.portOwner.pid} (achado por ${state.portOwner.via}) — o pid file não explica esta porta\n`,
+    );
+  }
   process.stdout.write(`log:      ${state.logPath}\n`);
   if (entry.providerBaseUrl) process.stdout.write(`base-url: ${entry.providerBaseUrl}\n`);
   const keyEnv = credentialEnv(entry);

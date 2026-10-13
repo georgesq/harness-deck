@@ -2,7 +2,7 @@
   "name": "harness-deck-vscode",
   "displayName": "Harness Deck",
   "description": "Abre varios harness de agente (DSH, Claude Code e outros via ACP) na mesma janela do VS Code, cada um com o seu proprio processo, porta e workspaces.",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "georgesq",
   "license": "MIT",
   "private": true,
@@ -22,6 +22,7 @@
     "onCommand:harnessDeck.startHarness",
     "onCommand:harnessDeck.stopHarness",
     "onCommand:harnessDeck.restartHarness",
+    "onCommand:harnessDeck.configureProvider",
     "onCommand:harnessDeck.refresh",
     "onStartupFinished"
   ],
@@ -47,7 +48,7 @@
         "harnessDeck.stopOnExit": {
           "type": "boolean",
           "default": true,
-          "description": "Encerrar, ao fechar o VS Code, os harnesses que esta extensao subiu (nao toca em processo que voce subiu a mao)."
+          "description": "Encerrar, ao fechar o VS Code, os harnesses que esta janela subiu \u2014 o processo e os filhos dele. Desligado, o harness continua em segundo plano e so `harness-deck down` encerra."
         },
         "harnessDeck.openSystemBrowser": {
           "type": "boolean",
@@ -97,6 +98,10 @@
         "command": "harnessDeck.restartHarness",
         "title": "Harness Deck: Reiniciar harness",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "harnessDeck.configureProvider",
+        "title": "Harness Deck: Configurar provedor"
       },
       {
         "command": "harnessDeck.openInBrowser",
@@ -165,6 +170,11 @@
           "command": "harnessDeck.addWorkspace",
           "when": "view == harnessDeck.harnesses",
           "group": "inline"
+        },
+        {
+          "command": "harnessDeck.configureProvider",
+          "when": "view == harnessDeck.harnesses",
+          "group": "harnessDeck_provider"
         }
       ],
       "commandPalette": [
@@ -196,11 +206,12 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "watch": "tsc -p tsconfig.json --watch",
-    "test": "node test/smoke.mjs",
-    "package": "node build-package.mjs"
+    "build": "npm run sync-shared && node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json",
+    "typecheck": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "watch": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --watch",
+    "test": "npm run build && node test/lifecycle.test.mjs && node test/notify.test.mjs && node test/stopall.test.mjs && node test/provider.test.mjs && node test/provider-command.test.mjs && node test/provider-e2e.test.mjs && node test/smoke.mjs",
+    "package": "node build-package.mjs",
+    "sync-shared": "node ../harness-deck-launcher/scripts/sync-shared.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
