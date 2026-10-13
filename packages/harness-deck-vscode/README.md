@@ -30,8 +30,18 @@ Configuração (Settings → Harness Deck): `harnessDeck.home` (raiz de dados, v
 `$HARNESS_DECK_HOME` ou `~/.harnessdeck`), `harnessDeck.dshCommand` (padrão `dsh`, resolvido no
 PATH), `harnessDeck.autoStart`, `harnessDeck.stopOnExit` e `harnessDeck.openSystemBrowser`.
 
-A chave do provedor não é configurada aqui: ela vive no `.env` da raiz de dados
-(`~/.harnessdeck/.env`), lido pela extensão na ativação.
+A chave do provedor tem dois lugares, e os dois valem:
+
+- **a página Settings/Models do próprio harness** (dentro da aba, no iframe) — é o caminho normal:
+  ela grava no cofre do harness, `<raiz>/homes/<nome>/.credentials.yaml`, modo 600, no mesmo formato
+  que o DSH usa quando roda solto (`~/.dsh/.credentials.yaml`);
+- **`.env` da raiz de dados** (`~/.harnessdeck/.env`) — a extensão lê na ativação e injeta no
+  processo do harness. É o caminho de sessão, para rodar sem painel.
+
+Se a mesma variável existir nos dois, **o `.env` da raiz de dados vence**, porque a extensão o injeta
+como ambiente herdado e no DSH o ambiente herdado tem precedência sobre o cofre. A página de settings
+continua mostrando a chave que você gravou lá; quem o harness usa é a do `.env`. Para a chave da UI
+valer, ela não pode estar no `.env`.
 
 Esta é uma implementação própria, não um fork do código da extensão
 `vithrive.deepseek-harness-vscode`. A decisão está em [docs/plano.md](../../docs/plano.md) e
