@@ -206,7 +206,15 @@ async function main(): Promise<void> {
 
 /** Render one line of the registry table. */
 function stateLine(state: HarnessState): string {
-  const status = state.listening ? 'no ar' : state.running ? 'subindo' : 'parado';
+  // A listener the pid file does not explain is an orphan, not a running
+  // harness: saying "no ar" there would hide the bug this status exists for.
+  const status = state.portOwner
+    ? `órfão ${state.portOwner.pid}`
+    : state.listening
+      ? 'no ar'
+      : state.running
+        ? 'subindo'
+        : 'parado';
   const pid = state.pid !== undefined ? String(state.pid) : '-';
   const url = state.listening ? harnessUrl(state.entry) : '';
   return [
@@ -401,11 +409,21 @@ async function commandDown(home: string, options: Options): Promise<void> {
   const entries = select(registry, options.positionals);
   for (const entry of entries) {
     const result = await stopHarness(home, entry);
+    if (result.stale) {
+      process.stdout.write(
+        `${entry.name}: NÃO parou — a porta ${entry.port} continua respondendo` +
+          (result.pid !== undefined ? ` (pid ${result.pid})` : '') +
+          `; o pid file ficou no lugar\n`,
+      );
+      continue;
+    }
     if (!result.stopped) {
       process.stdout.write(`${entry.name}: não estava rodando\n`);
       continue;
     }
-    process.stdout.write(`${entry.name}: parado (${result.signal})\n`);
+    process.stdout.write(
+      `${entry.name}: parado (${result.signal}${result.discovered ? `, dono da porta descoberto: pid ${String(result.pid)}` : ''})\n`,
+    );
   }
 }
 
@@ -429,6 +447,11 @@ async function commandStatus(home: string, options: Options): Promise<void> {
   process.stdout.write(`pid:      ${state.pid !== undefined ? state.pid : '-'}\n`);
   process.stdout.write(`processo: ${state.running ? 'vivo' : 'ausente'}\n`);
   process.stdout.write(`porta:    ${state.listening ? 'respondendo' : 'fechada'}\n`);
+  if (state.portOwner) {
+    process.stdout.write(
+      `dono:     pid ${state.portOwner.pid} (achado por ${state.portOwner.via}) — o pid file não explica esta porta\n`,
+    );
+  }
   process.stdout.write(`log:      ${state.logPath}\n`);
   if (entry.providerBaseUrl) process.stdout.write(`base-url: ${entry.providerBaseUrl}\n`);
   const keyEnv = credentialEnv(entry);
