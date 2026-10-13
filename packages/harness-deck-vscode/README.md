@@ -49,11 +49,15 @@ natureza: a extensão abre quantas abas quiser, uma por harness.
 - Sobe o harness que estiver parado, com `DSH_HOME` próprio, e espera a porta responder.
 - Dá a cada harness uma aba com a GUI dele embutida (URL com token), na mesma janela.
 - Para, reinicia, abre no navegador do sistema e mostra o log.
+- Configura a rota do provedor de um harness sem terminal (`Harness Deck: Configurar provedor`):
+  o painel conduz rota, modelos e variável da chave e chama `harness-deck add --force` para gravar.
+  As rotas e os modelos oferecidos são lidos do `@earendil-works/pi-ai` instalado, e os protocolos
+  da constante do `@deepseek-ai/dsh-llm-pi-ai` instalado — nada disso é escrito aqui.
 
 ## O que ela **não** faz
 
-- Não escreve o registro nem materializa perfil: isso é do CLI (`harness-deck add`). A extensão só
-  executa o que já está registrado.
+- Não escreve o registro por conta própria nem materializa perfil: quem grava é o CLI
+  (`harness-deck add --force`), chamado pelo painel. A extensão só executa o que está registrado.
 - Não toca em `~/.dsh`.
 - Não registra o DSH como modelo de chat do Copilot (o provedor de LM da extensão original ficou de
   fora da primeira versão).
@@ -87,6 +91,7 @@ pede aval do dono, e instalar por `.vsix` também é uma ação no ambiente dele
 | `src/registry.ts` | Lê e valida o registro; resolve `DSH_HOME`, log, pid e URL por harness |
 | `src/processes.ts` | Sobe, espera a porta, para e inspeciona o processo de cada harness |
 | `src/panel.ts` | Uma aba por harness, com a GUI embutida e o CSP que a permite |
+| `src/provider.ts` | Configura a rota do provedor: lê o catálogo instalado e chama o CLI `add --force` |
 | `src/tree.ts` | Lista lateral dos harnesses |
 | `src/extension.ts` | Ativação, comandos e ciclo de vida |
 | `src/vscode.d.ts` | Superfície mínima da API do VS Code (`@types/vscode` não está instalado aqui) |

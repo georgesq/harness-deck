@@ -39,7 +39,15 @@ execFileSync(process.execPath, [join(here, '..', 'harness-deck-launcher', 'scrip
 });
 execFileSync(process.execPath, [tsc, '-p', 'tsconfig.json'], { cwd: here, stdio: 'inherit' });
 
-for (const file of ['extension.js', 'panel.js', 'processes.js', 'registry.js', 'tree.js', 'shared/process.js']) {
+for (const file of [
+  'extension.js',
+  'panel.js',
+  'processes.js',
+  'provider.js',
+  'registry.js',
+  'tree.js',
+  'shared/process.js',
+]) {
   statSync(join(here, 'lib', file));
 }
 

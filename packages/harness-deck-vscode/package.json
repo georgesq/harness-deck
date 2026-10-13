@@ -22,6 +22,7 @@
     "onCommand:harnessDeck.startHarness",
     "onCommand:harnessDeck.stopHarness",
     "onCommand:harnessDeck.restartHarness",
+    "onCommand:harnessDeck.configureProvider",
     "onCommand:harnessDeck.refresh",
     "onStartupFinished"
   ],
@@ -99,6 +100,10 @@
         "icon": "$(debug-restart)"
       },
       {
+        "command": "harnessDeck.configureProvider",
+        "title": "Harness Deck: Configurar provedor"
+      },
+      {
         "command": "harnessDeck.openInBrowser",
         "title": "Harness Deck: Abrir no navegador"
       },
@@ -165,6 +170,11 @@
           "command": "harnessDeck.addWorkspace",
           "when": "view == harnessDeck.harnesses",
           "group": "inline"
+        },
+        {
+          "command": "harnessDeck.configureProvider",
+          "when": "view == harnessDeck.harnesses",
+          "group": "harnessDeck_provider"
         }
       ],
       "commandPalette": [
@@ -199,7 +209,7 @@
     "build": "npm run sync-shared && node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json",
     "typecheck": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
     "watch": "node ../harness-deck-claude-code/node_modules/typescript/bin/tsc -p tsconfig.json --watch",
-    "test": "npm run build && node test/lifecycle.test.mjs && node test/notify.test.mjs && node test/stopall.test.mjs && node test/smoke.mjs",
+    "test": "npm run build && node test/lifecycle.test.mjs && node test/notify.test.mjs && node test/stopall.test.mjs && node test/provider.test.mjs && node test/provider-command.test.mjs && node test/provider-e2e.test.mjs && node test/smoke.mjs",
     "package": "node build-package.mjs",
     "sync-shared": "node ../harness-deck-launcher/scripts/sync-shared.mjs"
   },
