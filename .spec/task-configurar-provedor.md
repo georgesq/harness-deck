@@ -104,12 +104,47 @@ que ele recebeu e conferir se a variável está lá dentro.
 Só depois disso faz sentido escrever correção. Enquanto os três itens não estiverem medidos, qualquer
 conserto é chute com nome bonito.
 
+## BACKLOG — clicar no harness da barra lateral não abre o painel (duplicidade de prompt)
+
+Relato do dono (13/10/2026): com a lista de harnesses na barra lateral, clicar no harness mostra
+**no topo** um seletor pedindo a mesma informação que ele acabou de escolher na lista, e o painel
+**não abre**. Ele classificou como duplicidade — o dado já foi dado uma vez.
+
+Medido até agora, e só isto:
+
+- o único prompt com o texto "Escolha o harness" mora em `resolveEntry`
+  ([extension.ts:149](packages/harness-deck-vscode/src/extension.ts#L149)), que é usado tanto por
+  `openHarness` quanto por `startHarness`/`stopHarness`/`restartHarness`;
+- o nó da árvore carrega a entrada e declara `command: harnessDeck.openHarness` com a entrada em
+  `arguments` ([tree.ts:50](packages/harness-deck-vscode/src/tree.ts#L50)), e `entryOf` aceita essa
+  forma ([extension.ts:131-137](packages/harness-deck-vscode/src/extension.ts#L131-L137)) — então, pelo
+  código, o prompt **não deveria** aparecer nesse caminho;
+- a suíte cobre o comando **pelo menu de contexto**, passando um nó sintético, e passa
+  ([provider-command.test.mjs:198-199](packages/harness-deck-vscode/test/provider-command.test.mjs#L198-L199)).
+  O caminho **do clique** nunca foi exercitado.
+
+Não localizado, e é o que precisa ser medido antes de mexer:
+
+1. **qual argumento o clique entrega de fato** ao `harnessDeck.openHarness` — se chega `undefined`, o
+   prompt é consequência; se chega a entrada, o prompt vem de outro handler e o defeito é outro;
+2. **se o painel falha depois de resolver a entrada** — `openHarnessPanel` é chamado só depois de
+   `forPanel` ([extension.ts:272-280](packages/harness-deck-vscode/src/extension.ts#L272-L280)); um
+   painel que não abre com o prompt na frente também é compatível com erro silencioso antes dele;
+3. **se o clique dispara mais de um comando** — o nó declara `command` e o manifesto contribui menu; se
+   os dois caminhos chegarem, aparece prompt e o painel fica para trás.
+
+Método, para não repetir o erro do campo da chave: **instrumentar antes de corrigir.** Um log
+temporário no `register` imprimindo o nome do comando e a forma do argumento, uma instalação, um
+clique — o dado sai daí, não de leitura de código. Só depois escrever o teste que reproduz o defeito e
+a correção.
+
 ## Pendências fora das fatias
 
 - [x] VSIX reempacotado e conferido (arquivo e contagem) — `dist/harness-deck-vscode-0.1.2.vsix`,
       47048 bytes, 14 arquivos; instalado no VS Code do dono em 13/10/2026 (`0.1.1` → `0.1.2`).
-- [x] Commit por caminho e push, depois das fatias C e D fechadas — 7 commits em
-      `origin/feat/model-list-and-tool-approval`, o último `09d32b5`.
+- [x] Commit por caminho e push, depois das fatias C e D fechadas — 8 commits em
+      `origin/feat/model-list-and-tool-approval`, o último `a75ad7d`.
+- [ ] Clique no harness da barra lateral: abre o painel sem pedir de novo o harness (backlog acima).
 - [~] Teste do dono: instalar, `Developer: Reload Window`, configurar o provedor pelo painel, subir e
       mandar uma mensagem de verdade numa rota não-OpenRouter (é a prova que fecha o REQ-R3 da spec
       [spec-feat-provider-route.md](spec-feat-provider-route.md)). Instalou e chegou até a tela de
