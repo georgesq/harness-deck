@@ -45,6 +45,7 @@ Rota que o catálogo instalado não descreve e que não declara `models` é recu
 | **REQ-R5** | Endpoint local (Ollama, LM Studio, gateway da casa) não inventa chave obrigatória. | `apiKeyEnv` cai em `LLM_API_KEY` quando a rota não tem convenção própria; rota local não exige chave nenhuma. |
 | **REQ-R6** | Trocar de rota **não deixa rastro** da rota antiga no perfil materializado. | `buildProvider` descarta o lembrado quando o `kind` muda; `mergeProfilePatch` regenera `agent-default-model` e `llm-pi-ai` quando a rota muda. |
 | **REQ-R7** | O painel e o CLI continuam lendo **o mesmo contrato de registro**. | `registry.ts` passa a ser cópia compartilhada (`sync-shared.mjs` + `shared-copy.test.ts`), como o `process.ts` do REQ-P4. |
+| **REQ-R9** | A variável de chave que o deck anuncia — no `add`, no `status` e na resolução do `.env` do painel — é a **da rota**, não a do motor. | `providerApiKeyEnv` só é gravado quando o dono nomeia uma (`--key-env`); senão `credentialEnv` cai na rota. Defeito encontrado ao preparar o teste do Gemini: `--provider google` mandava exportar `DEEPSEEK_API_KEY`. |
 | **REQ-R8** | O CLI continua recusando registro que não sobe. | `loadRegistry` segue estrito no CLI; o painel segue tolerante (entrada ruim é descartada da tela, não derruba a view). |
 
 ---

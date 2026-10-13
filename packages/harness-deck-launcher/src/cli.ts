@@ -341,18 +341,26 @@ async function commandAdd(home: string, options: Options): Promise<void> {
   const noteFlag = flag(options, 'note');
   const keyEnvFlag = flag(options, 'key-env');
 
+  // The provider wins over the engine when it names its own variable. This
+  // field is the harness' *answer* to "which variable holds the key", and a
+  // route carries the right answer: registering `--provider google` and then
+  // being told to export `DEEPSEEK_API_KEY` is how a `.env` with the key under
+  // its real name is never found. It stays absent when the provider already
+  // names one, so `credentialEnv` falls through to the route.
+  const provider = buildProvider(options, previous?.provider);
+  const providerApiKeyEnv = keyEnvFlag ?? (provider.apiKeyEnv === providerKeyEnv(provider.kind) ? undefined : previous?.providerApiKeyEnv);
   const entry: HarnessEntry = {
     name,
     profile: name,
     home: homeFlag ?? previous?.home ?? join(harnessesHome(home), name),
     port,
     engine,
-    provider: buildProvider(options, previous?.provider),
+    provider,
     enabled: previous?.enabled ?? true,
     ...((baseUrlFlag ?? previous?.providerBaseUrl) === undefined
       ? {}
       : { providerBaseUrl: (baseUrlFlag ?? previous?.providerBaseUrl) as string }),
-    providerApiKeyEnv: keyEnvFlag ?? previous?.providerApiKeyEnv ?? DEFAULT_KEY_ENV[engine],
+    ...(providerApiKeyEnv === undefined ? {} : { providerApiKeyEnv }),
     ...((noteFlag ?? previous?.note) === undefined ? {} : { note: (noteFlag ?? previous?.note) as string }),
   };
 

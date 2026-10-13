@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
+import type { HarnessEntry } from '../src/registry.ts';
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -138,6 +139,22 @@ assert.ok(patch.includes('api: openai-completions'), 'o protocolo não chegou ao
 assert.ok(patch.includes('baseURL: https://llm.interno/v1'), 'a URL não chegou ao patch');
 assert.ok(patch.includes('- id: time-interno-70b'), 'a lista de modelos não chegou ao patch');
 ok('o patch gerado carrega rota, protocolo, URL e a lista de modelos');
+
+// The variable the harness is told to export has to be the provider's own. A
+// route registered as `google` that still answers `DEEPSEEK_API_KEY` is how a
+// `.env` holding the key under its real name is never found — the extension
+// resolves the key through `credentialEnv`, not through the patch.
+const { credentialEnv, normalizeRegistry } = await import('../src/registry.ts');
+/** The registered entry, validated the way the harness reads it. */
+const live = async (name: string): Promise<HarnessEntry> =>
+  normalizeRegistry(await registry(), home).harnesses.find((harness) => harness.name === name)!;
+await cli_('add', 'teste', '--force', '--provider', 'google', '--model', 'gemini-3.7-flash');
+assert.equal(credentialEnv(await live('teste')), 'GEMINI_API_KEY', 'a chave seguida não é a da rota');
+ok('a chave que o deck manda exportar é a da rota, não a do motor');
+
+await cli_('add', 'teste', '--force', '--provider', 'google', '--key-env', 'MINHA_CHAVE');
+assert.equal(credentialEnv(await live('teste')), 'MINHA_CHAVE');
+ok('--key-env continua vencendo a rota');
 
 await rm(home, { recursive: true, force: true });
 process.stdout.write(`\ntudo ok (${checks} verificações)\n`);

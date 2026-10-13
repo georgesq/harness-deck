@@ -14,6 +14,7 @@ Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combina
 | [x] | REQ-R5 — endpoint local sem chave | `registry.ts` (`providerKeyEnv` → `LLM_API_KEY`) | `add.test.ts`: `ollama` aceito com `apiKeyEnv: LLM_API_KEY` |
 | [x] | REQ-R6 — trocar de rota não deixa rastro | `cli.ts` (`switched`), `materialize.ts` (`mergeProviderRoute`, `providerOf`) | `merge-patch.test.ts`: 4 casos; mutação das duas guardas faz 3 falharem. Ciclo real `openrouter`→`ollama`: `grep -c openrouter` = 0 |
 | [x] | REQ-R7 — painel e CLI leem o mesmo contrato | `sync-shared.mjs`, `src/shared/registry.ts`, `vscode/src/registry.ts` (shim) | `shared-copy.test.ts` (2 verificações) falha se qualquer cópia divergir |
+| [x] | REQ-R9 — a variável de chave que o deck manda exportar é a **da rota**, não a do motor | `cli.ts` (`providerApiKeyEnv` só quando o dono nomeia uma) | `add.test.ts`: `--provider google` responde `GEMINI_API_KEY`; a mutação para o padrão do motor faz o teste falhar |
 | [x] | REQ-R8 — CLI estrito, painel tolerante | `registry.ts` (`normalizeRegistry`) vs `vscode/src/registry.ts` (`loadRegistry`) | `stopall.test.mjs`, `lifecycle.test.mjs`; `loadRegistry` mantém a filtragem por entrada |
 
 ## Pendente do dono
