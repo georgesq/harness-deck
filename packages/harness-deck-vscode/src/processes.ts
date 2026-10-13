@@ -10,7 +10,15 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { findPortOwner, portListening, processAlive, readPid, stopProcess, type StopOutcome } from './shared/process';
+import {
+  assertWritableDir,
+  findPortOwner,
+  portListening,
+  processAlive,
+  readPid,
+  stopProcess,
+  type StopOutcome,
+} from './shared/process';
 import {
   credentialEnv,
   envFilePath,
@@ -58,6 +66,7 @@ export interface HarnessEvents {
 }
 
 export {
+  assertWritableDir,
   findPortOwner,
   killTree,
   portListening,
@@ -184,13 +193,13 @@ export class HarnessProcesses {
   async start(entry: HarnessEntry, options: { wait?: boolean } = {}): Promise<HarnessState> {
     if (await portListening(entry.port)) return this.inspect(entry);
 
+    // A read-only deck home cannot hold a pid file or a log, and the failure
+    // would otherwise appear deep inside the boot as an EROFS on an unrelated
+    // path. Name the problem before anything is spawned.
+    await assertWritableDir(this.deckHome, 'a raiz do deck');
+    await assertWritableDir(harnessHome(this.deckHome, entry), `a DSH_HOME do harness "${entry.name}"`);
     const logPath = harnessLogPath(this.deckHome, entry);
     mkdirSync(dirname(logPath), { recursive: true });
-    // The harness home is the `cwd` below and the `DSH_HOME` of the process. It
-    // may not exist yet (first start of a harness, or a deck home that was
-    // cleaned by hand) and Node reports a missing `cwd` as ENOENT on the
-    // *command*, which sends the reader after the wrong problem.
-    mkdirSync(harnessHome(this.deckHome, entry), { recursive: true });
     const log = createWriteStream(logPath, { flags: 'a' });
     // `dsh --profile <name>` boots the profile; the flags after it are the app's.
     log.write(
