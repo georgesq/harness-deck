@@ -2,6 +2,7 @@
 
 Acompanhamento da implementação de [spec-feat-parar-e-enviar.md](spec-feat-parar-e-enviar.md).
 Cada item marcado aponta a prova; item sem prova fica desmarcado, mesmo que o código exista.
+Branch desta frente: **`feat/model-list-and-tool-approval`** (18 commits até `a83a43a`).
 
 Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combinada · `[ ]` pendente.
 
@@ -66,7 +67,7 @@ Suíte da ponte verde: **12 verificações** no laço e **7** no controle ACP. `
 | [x] | VSIX reconstruído com o módulo compartilhado | 31.3 kB, 12 arquivos |
 | [x] | `tsc --noEmit` na ponte | limpo |
 | [x] | Commit da ponte | `f618ebb`, `4ac6944`, `27368db` |
-| [ ] | Push da branch `chore/protocolo-contribuicao` | pendente |
+| [x] | Push da branch | `3dc526b..a83a43a` em `feat/model-list-and-tool-approval` |
 | [ ] | Reinstalar o VSIX no VS Code | depende do dono |
 | [ ] | Print do painel provando REQ-P6 e REQ-L3 | depende do dono |
 | [ ] | Rotacionar a chave OpenRouter exposta | depende do dono |
