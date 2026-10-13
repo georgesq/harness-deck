@@ -87,8 +87,11 @@ export const PROVIDER_BASE_URLS: Record<HarnessProvider['kind'], string> = {
 /**
  * Cheap model the Claude Code CLI uses for background work (titles, summaries).
  * Its own default is a Haiku id the provider does not serve.
+ *
+ * Owner's rule of 13/10/2026: nothing leaves through a Claude model, everything
+ * runs on OpenRouter — so the background slot is DeepSeek too, not a Haiku.
  */
-export const FAST_MODEL_SLUG = 'anthropic/claude-haiku-5.5';
+export const FAST_MODEL_SLUG = 'deepseek/deepseek-v4.1-flash';
 
 /**
  * The catalog id the Claude Code CLI expects for a provider slug.
