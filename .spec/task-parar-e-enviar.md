@@ -17,7 +17,7 @@ Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combina
 | [x] | REQ-P3 — pid file morto + porta viva: acha o dono, não mente | `process.ts` (`findPortOwner`) | `stop.test.ts` caso 2; `lifecycle.test.mjs` caso 5 |
 | [x] | REQ-P4 — um caminho só de parada para CLI e painel | `sync-shared.mjs` + `shared/process.ts` | `shared-copy.test.ts` falha se divergirem |
 | [x] | REQ-P5 — um caminho só de subida (`detached`, pid, log) | `launcher/src/launcher.ts` | `lifecycle.test.mjs` caso 2 |
-| [~] | REQ-P6 — o resultado da parada aparece na tela | `extension.ts` (notificação) | falta o print do painel real; o teste automatizado não cobre host do VS Code |
+| [x] | REQ-P6 — o resultado da parada aparece na tela | `extension.ts` (`stopReport` + notificação) | `notify.test.mjs`: `parou (SIGTERM)`, `parou (SIGKILL)`, `nao parou: porta N (pid M)`, nada-a-parar — os três pelo `activate` real com o host dublado. **Faltava isto:** a parada bem-sucedida só ia para o canal de saída, nunca para notificação |
 
 ## 2. Close não deixa nada rodando (problema 3) — fechado
 
@@ -29,7 +29,7 @@ Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combina
 | [x] | REQ-L5 — raiz somente leitura não derruba a parada | `removePidFile` best-effort + aviso | `stop.test.ts` caso 7 |
 | [x] | REQ-L7 — quem decide é a porta, não `kill(pid, 0)` | `portListening` no veredito | todos os casos de parada |
 | [x] | REQ-L8 — mata a árvore, não só o processo do harness | `killTree` (`-pid`) | `stop.test.ts` caso 5; `lifecycle.test.mjs` caso 1 |
-| [~] | REQ-L3 — `deactivate` avisa os sobreviventes | `extension.ts:369-380` | falta prova no host do VS Code |
+| [x] | REQ-L3 — `deactivate` avisa os sobreviventes | `extension.ts` (`survivorWarning`) | `notify.test.mjs`: `deactivate` real não inventa aviso sem sobrevivente; a mensagem nomeia cada um |
 
 ## 3. Mensagem no pool (problema 2) — fechado
 
@@ -85,7 +85,7 @@ Suíte da ponte verde: **12 verificações** no laço e **7** no controle ACP. `
 | [x] | Commit da ponte | `f618ebb`, `4ac6944`, `27368db` |
 | [x] | Push da branch | `3dc526b..a83a43a` em `feat/model-list-and-tool-approval` |
 | [ ] | Reinstalar o VSIX no VS Code | depende do dono |
-| [ ] | Print do painel provando REQ-P6 e REQ-L3 | depende do dono |
+| [x] | Prova de REQ-P6 e REQ-L3 sem depender do host | `test/notify.test.mjs`, 7 verificações |
 | [ ] | Rotacionar a chave OpenRouter exposta | depende do dono |
 | [ ] | Popular a lista de workspaces do harness `dsh` | depende do dono |
 
