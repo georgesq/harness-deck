@@ -250,6 +250,8 @@ export interface StopResult {
   discovered?: boolean;
   /** Pid that was actually signalled. */
   pid?: number;
+  /** True when the pid file could not be removed (read-only deck home). */
+  pidFileKept?: boolean;
 }
 
 /**
@@ -285,6 +287,7 @@ export async function stopHarness(home: string, entry: HarnessEntry, timeoutMs =
     ...(outcome.stale ? { stale: true } : {}),
     ...(outcome.discovered ? { discovered: true } : {}),
     ...(outcome.pid !== undefined ? { pid: outcome.pid } : {}),
+    ...(outcome.pidFileKept ? { pidFileKept: true } : {}),
   };
 }
 

@@ -418,12 +418,17 @@ async function commandDown(home: string, options: Options): Promise<void> {
       continue;
     }
     if (!result.stopped) {
-      process.stdout.write(`${entry.name}: não estava rodando\n`);
+      process.stdout.write(
+        `${entry.name}: não estava rodando${result.pidFileKept ? ' (o pid file não pôde ser removido: sistema de arquivos somente leitura)' : ''}\n`,
+      );
       continue;
     }
     process.stdout.write(
       `${entry.name}: parado (${result.signal}${result.discovered ? `, dono da porta descoberto: pid ${String(result.pid)}` : ''})\n`,
     );
+    if (result.pidFileKept) {
+      process.stdout.write(`${entry.name}: aviso: o pid file não pôde ser removido (somente leitura)\n`);
+    }
   }
 }
 

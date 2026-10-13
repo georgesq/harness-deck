@@ -54,6 +54,11 @@ export interface StopOutcome {
   discovered?: boolean;
   /** Pid that was actually signalled, when one was found. */
   pid?: number;
+  /**
+   * True when the pid file could not be removed (read-only deck home). The stop
+   * itself succeeded; the file will be replaced by the next start.
+   */
+  pidFileKept?: boolean;
 }
 
 /** True when `pid` names a live process this user may signal. */
@@ -63,6 +68,25 @@ export function processAlive(pid: number): boolean {
     return true;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/**
+ * Remove a pid file, tolerating a filesystem that will not let it go.
+ *
+ * The stop itself already succeeded when this runs, so a read-only deck home
+ * (a mounted backup, a restored snapshot) must not turn a successful stop into a
+ * command error. The caller is told whether the file went away.
+ *
+ * @param path - pid file to remove.
+ * @returns true when the file is gone after the attempt.
+ */
+export async function removePidFile(path: string): Promise<boolean> {
+  try {
+    await rm(path, { force: true });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -197,8 +221,8 @@ export async function stopProcess(target: StopTarget): Promise<StopOutcome> {
   const pidAlive = pidFilePid !== undefined && processAlive(pidFilePid);
 
   if (!listening && !pidAlive) {
-    if (target.pidPath !== undefined) await rm(target.pidPath, { force: true });
-    return { stopped: false, signal: 'none' };
+    const removed = target.pidPath === undefined ? true : await removePidFile(target.pidPath);
+    return { stopped: false, signal: 'none', ...(removed ? {} : { pidFileKept: true }) };
   }
 
   // The port is the truth: prefer whoever holds it, and fall back to the pid
@@ -220,13 +244,25 @@ export async function stopProcess(target: StopTarget): Promise<StopOutcome> {
 
   killTree(pid, 'SIGTERM');
   if (await waitForStopped(pid, target.port, timeoutMs)) {
-    if (target.pidPath !== undefined) await rm(target.pidPath, { force: true });
-    return { stopped: true, signal: 'SIGTERM', pid, ...(discovered ? { discovered: true } : {}) };
+    const removed = target.pidPath === undefined ? true : await removePidFile(target.pidPath);
+    return {
+      stopped: true,
+      signal: 'SIGTERM',
+      pid,
+      ...(discovered ? { discovered: true } : {}),
+      ...(removed ? {} : { pidFileKept: true }),
+    };
   }
   killTree(pid, 'SIGKILL');
   if (await waitForStopped(pid, target.port, 3000)) {
-    if (target.pidPath !== undefined) await rm(target.pidPath, { force: true });
-    return { stopped: true, signal: 'SIGKILL', pid, ...(discovered ? { discovered: true } : {}) };
+    const removed = target.pidPath === undefined ? true : await removePidFile(target.pidPath);
+    return {
+      stopped: true,
+      signal: 'SIGKILL',
+      pid,
+      ...(discovered ? { discovered: true } : {}),
+      ...(removed ? {} : { pidFileKept: true }),
+    };
   }
   // Survivor: keep the pid file, it is still the only address of the harness.
   return { stopped: false, signal: 'SIGKILL', stale: true, pid, ...(discovered ? { discovered: true } : {}) };

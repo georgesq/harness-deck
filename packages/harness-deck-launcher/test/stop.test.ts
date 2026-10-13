@@ -11,7 +11,7 @@
  * the listener, the port answering with no pid file at all, a process that
  * ignores SIGTERM, and a parent whose child would outlive it.
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -199,7 +199,24 @@ const root = await mkdtemp(join(tmpdir(), 'harness-deck-stop-'));
   ok('REQ-P2: sem porta e sem processo, a parada é um no-op honesto');
 }
 
-// 7. findPortOwner is the piece that made cases 2 and 3 work.
+// 7. A read-only deck home must not turn a successful stop into an error.
+{
+  const port = await freePort();
+  const locked = join(root, 'locked');
+  await mkdir(locked, { recursive: true });
+  const pidPath = join(locked, 'dsh.pid');
+  const pid = await fakeHarness(port, { pidFile: pidPath });
+  await chmod(locked, 0o500);
+  const outcome = await stopProcess({ port, pidPath });
+  await chmod(locked, 0o700);
+  assert.equal(outcome.stopped, true, 'a parada aconteceu; só o pid file é que não saiu');
+  assert.equal(outcome.pidFileKept, true);
+  assert.equal(await portListening(port), false);
+  assert.equal(processAlive(pid), false);
+  ok('REQ-L5: pid file em diretório somente leitura — a parada vale e o aviso é explícito');
+}
+
+// 8. findPortOwner is the piece that made cases 2 and 3 work.
 {
   const port = await freePort();
   const pid = await fakeHarness(port);
