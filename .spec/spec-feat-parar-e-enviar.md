@@ -345,9 +345,50 @@ o `down` **para** o harness (porta fecha, processo morre), mas não consegue apa
 dois pids velhos (`claude` 394127, `dsh` 707115) ficam no disco. Antes desta correção esse EROFS
 derrubava o comando inteiro com `erro: EROFS`; agora é aviso.
 
-Isso é do ambiente, não do código: exige `sudo mount -o remount,rw /` da parte do dono. Enquanto o
-sistema estiver `ro`, **nenhum** harness consegue subir pelo deck (o `start` escreve pid file e log),
-então é o primeiro item a resolver antes do teste de fumaça real.
+O contorno **não** é remount da raiz: o dono recusou com razão ("permissao de R/W para raiz, não
+pode, isso é contra segurança"). A raiz do deck é configurável — `HARNESS_DECK_HOME` no CLI e
+`harnessDeck.home` na extensão (`resolveHome`, `registry.ts:206`) — então a saída é apontar a raiz
+para um diretório gravável. Neste ambiente só há dois pontos graváveis fora de `/tmp`: o próprio
+projeto (bind mount `rw`) e `/dev/shm`. Como `/tmp` não sobrevive entre sessões, o caminho natural é
+uma pasta ignorada pelo git dentro do projeto.
+
+O produto passou a **provar a escrita antes de subir qualquer coisa**: `assertWritableDir` faz um
+probe no diretório e, quando falha, diz o caminho e as duas formas de contornar. Antes, o dono via:
+
+```
+erro: EROFS: read-only file system, unlink
+      '/home/georgesq/.harnessdeck/homes/claude/profiles/claude/node_modules/harness-deck-claude-code'
+```
+
+Agora vê:
+
+```
+erro: a raiz do deck não aceita escrita (/home/georgesq/.harnessdeck): EROFS.
+      Aponte a raiz para um diretório gravável com `HARNESS_DECK_HOME=/caminho/gravável`
+      no CLI ou com a configuração `harnessDeck.home` na extensão.
+```
+
+### 9.3 Ciclo completo provado com a raiz gravável
+
+Com `HARNESS_DECK_HOME` apontando para uma pasta gravável dentro do projeto, o ciclo inteiro rodou
+com o harness real (não o de mentira) em 13/10/2026:
+
+```
+$ harness-deck up claude
+claude: subindo na porta 3131 (pid 40)
+claude: pronto em http://127.0.0.1:3131
+
+$ ss -ltn | grep 3131
+LISTEN 0  511  127.0.0.1:3131  0.0.0.0:*
+
+$ harness-deck down claude
+claude: parado (SIGTERM)
+
+$ ss -ltn | grep 3131      # nada
+$ ls .run/claude/dsh.pid   # No such file or directory
+```
+
+Esse é o REQ-P1 fechado de ponta a ponta, com o binário real do DSH.
 
 ### 9.3 Provas colhidas no ambiente real
 
