@@ -22,6 +22,7 @@ import {
   findPortOwner,
   killTree,
   portListening,
+  procfsPortOwner,
   processAlive,
   stopProcess,
 } from '../src/process.ts';
@@ -252,6 +253,29 @@ const root = await mkdtemp(join(tmpdir(), 'harness-deck-stop-'));
   await stopProcess({ port });
   assert.equal(await findPortOwner(port), undefined, 'porta fechada não tem dono');
   ok(`findPortOwner acha o dono da porta (via ${String(owner?.via)}) e não acha depois de fechar`);
+}
+
+// --- REQ-L4, third technique: the port owner read from /proc ----------------
+// `lsof` and `fuser` are both optional. Where neither is installed the deck
+// still has to name the owner, so the `/proc` mapping is exercised directly
+// instead of only through `findPortOwner`, which would stop at the first tool.
+{
+  const port = await freePort();
+  const pid = await fakeHarness(port);
+  const owner = await procfsPortOwner(port);
+  assert.equal(owner?.pid, pid, 'o mapeamento por /proc nao achou o listener');
+  assert.equal(owner?.via, 'procfs');
+  ok('procfsPortOwner acha o dono da porta sem lsof e sem fuser');
+
+  // A port nobody listens on has no inode in the table: no answer, and above
+  // all no guess.
+  const free = await freePort();
+  assert.equal(await procfsPortOwner(free), undefined);
+  ok('procfsPortOwner devolve undefined para porta sem listener');
+
+  await stopProcess({ port });
+  assert.equal(await portListening(port), false);
+  ok('a parada do listener achado por /proc fecha a porta');
 }
 
 await rm(root, { recursive: true, force: true });

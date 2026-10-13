@@ -25,7 +25,7 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -161,7 +161,8 @@ export function portListening(port: number, host = '127.0.0.1', timeoutMs = 800)
  *
  * `undefined` means "no tool could tell", never "the port is free": the caller
  * has to probe the port itself. `lsof` is tried first because its output is a
- * bare pid; `fuser` writes pids to stdout and noise to stderr.
+ * bare pid; `fuser` writes pids to stdout and noise to stderr; `/proc` is the
+ * fallback for a machine that has neither tool installed.
  *
  * @param port - the TCP port to look up on loopback.
  * @returns the owner pid and the tool that found it, or undefined.
@@ -178,6 +179,81 @@ export async function findPortOwner(port: number): Promise<{ pid: number; via: s
       if (Number.isInteger(pid) && pid > 0) return { pid, via: probe.via };
     } catch {
       /* tool absent, timed out, or found nothing: try the next one */
+    }
+  }
+  // Last resort, and the only probe that needs no tool at all: the kernel
+  // publishes every socket with its owner inode, and `/proc/<pid>/fd` says which
+  // process holds that inode. This is what covers a machine without `lsof` and
+  // `fuser`, where the two probes above both come back empty.
+  return await procfsPortOwner(port);
+}
+
+/** A `/proc/net/tcp` row: local address, state and the owning socket inode. */
+function parseProcNetTcp(raw: string, wanted: string): string[] {
+  const inodes: string[] = [];
+  for (const line of raw.split('\n').slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length < 11) continue;
+    // The row starts with a right-aligned index (`18:`), so the address is field
+    // 1, the state field 3 and the inode field 9. Destructuring from field 1 on
+    // keeps the offsets readable; written this way so the shared copy also
+    // compiles under the extension's `noUncheckedIndexedAccess`.
+    const [, local, , state, , , , , , inode] = fields;
+    if (local === undefined || state === undefined || inode === undefined) continue;
+    if (!local.endsWith(`:${wanted}`)) continue;
+    if (state !== '0A') continue;
+    if (/^\d+$/.test(inode)) inodes.push(inode);
+  }
+  return inodes;
+}
+
+/**
+ * The pid holding one port, read straight out of `/proc`.
+ *
+ * Split out of `findPortOwner` because it is the fallback that has to be
+ * testable on its own: it is the path a machine without `lsof` takes.
+ *
+ * @param port - the TCP port to look up.
+ * @returns the owner pid, tagged `procfs`, or undefined when nothing matched.
+ */
+export async function procfsPortOwner(port: number, budgetMs = OWNER_PROBE_TIMEOUT_MS): Promise<{ pid: number; via: string } | undefined> {
+  const hexPort = port.toString(16).toUpperCase();
+  const inodes = new Set<string>();
+  for (const file of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    try {
+      for (const inode of parseProcNetTcp(await readFile(file, 'utf8'), hexPort)) inodes.add(inode);
+    } catch {
+      /* no v6 table, or no procfs at all: the other file may still answer */
+    }
+  }
+  if (inodes.size === 0) return undefined;
+  const wanted = new Set([...inodes].map((inode) => `socket:[${inode}]`));
+  const deadline = Date.now() + budgetMs;
+  let pids: string[];
+  try {
+    pids = await readdir('/proc');
+  } catch {
+    return undefined;
+  }
+  for (const name of pids) {
+    if (!/^\d+$/.test(name)) continue;
+    // The scan is the expensive part: a slow lookup is worse than no answer,
+    // and the caller treats `undefined` as "probe again", never as "free".
+    if (Date.now() > deadline) return undefined;
+    let fds: string[];
+    try {
+      fds = await readdir(`/proc/${name}/fd`);
+    } catch {
+      continue; // another user's process, or it exited mid-scan
+    }
+    for (const fd of fds) {
+      try {
+        if (wanted.has(await readlink(`/proc/${name}/fd/${fd}`))) {
+          return { pid: Number.parseInt(name, 10), via: 'procfs' };
+        }
+      } catch {
+        /* the fd closed between the listing and the read */
+      }
     }
   }
   return undefined;
