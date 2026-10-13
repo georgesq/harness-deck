@@ -181,7 +181,15 @@ $ ss -ltnp | grep 3131
 LISTEN 127.0.0.1:3131          # VS Code fechado, servidor no ar
 $ cat ~/.harnessdeck/.run/claude/dsh.pid
 394127                          # processo morto: o pid file mente
+$ curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3131/
+401                             # e continua respondendo
 ```
+
+O dono rodou `kill` no processo que achou e **a porta continuou no ar**; `lsof -i :3131` e
+`fuser -n tcp 3131` não devolvem nada, e o socket (`/proc/net/tcp`, inode `2016498`, uid 1000) não
+aparece no `/proc` de nenhum processo visível. Ou seja: há um servidor respondendo cuja posse o deck
+não consegue provar — exatamente o caso que o REQ-L4 tem de resolver (a porta é a verdade, e o deck
+precisa de um caminho confiável para achar o dono dela).
 
 ### 4.3 Causa
 
