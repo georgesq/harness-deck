@@ -34,6 +34,7 @@ import { HarnessProxy } from './proxy';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, openPanelNames, revealHarnessPanel, updateHarnessPanel } from './panel';
 import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './workspaces';
+import { configureProvider } from './provider';
 
 /** Poll interval of the tree, in milliseconds. */
 const POLL_MS = 5000;
@@ -255,6 +256,18 @@ async function stopHarness(entry: HarnessEntry): Promise<void> {
   await refresh();
 }
 
+/**
+ * Stop then start one harness.
+ *
+ * The one restart path in the extension: the `harnessDeck.restartHarness`
+ * command and the action offered after configuring a provider both land here,
+ * so "Reiniciar agora" cannot drift into a second, weaker restart (REQ-C8).
+ */
+export async function restartHarness(entry: HarnessEntry): Promise<void> {
+  await stopHarness(entry);
+  await startHarness(entry);
+}
+
 /** Open (and, when configured, start) the panel of one harness. */
 async function openHarness(entry: HarnessEntry): Promise<void> {
   const autoStart = workspace.getConfiguration('harnessDeck').get<boolean>('autoStart', true);
@@ -382,8 +395,15 @@ function registerCommands(context: ExtensionContext): void {
   register('harnessDeck.restartHarness', async (argument) => {
     const entry = await resolveEntry(argument);
     if (entry === undefined) return;
-    await stopHarness(entry);
-    await startHarness(entry);
+    await restartHarness(entry);
+  });
+  register('harnessDeck.configureProvider', async (argument) => {
+    await configureProvider(argument, {
+      home: deckHome(),
+      dshCommand: dshCommand(),
+      refresh,
+      restart: restartHarness,
+    });
   });
   register('harnessDeck.openInBrowser', async (argument) => {
     const entry = await resolveEntry(argument);
