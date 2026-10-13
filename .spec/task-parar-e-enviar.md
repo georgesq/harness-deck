@@ -37,15 +37,31 @@ Suíte da ponte verde: **12 verificações** no laço e **7** no controle ACP. `
 
 | | Requisito | Onde | Prova |
 | --- | --- | --- | --- |
-| [x] | REQ-M1 — a mensagem aparece na trajetória no instante do envio | `bridge-loop.ts` | `bridge-loop.test.ts`: `user/message` antes do `turn/end` |
+| [x] | REQ-M1 — a mensagem aparece na trajetória no instante do envio (caminho `steer`) | `bridge-loop.ts` | `bridge-loop.test.ts`: `user/message` antes do `turn/end`; no envio, o registro durável é o `agent/inbox/spliced`, que o acumulador do cliente lê (`dsh-api-session-controller/lib/types/client/sessions/session.js:679`) |
 | [x] | REQ-M2 — consome `next-step` na fronteira do passo | `bridge-loop.ts` | `bridge-loop.test.ts`: steer no meio do passo vira o passo 2 do mesmo turno |
-| [x] | REQ-M3 — `steer` e `followup` como no motor padrão | `bridge-loop.ts` | `bridge-loop.test.ts`: followup abre turno próprio depois do `turn/end` |
+| [x] | REQ-M3 — `steer` e `followup` como no motor padrão | `bridge-loop.ts` | `bridge-loop.test.ts`: followup abre turno próprio depois do `turn/end`; com `busyEnter: queue` (padrão) o followup entra na trajetória na abertura do turno seguinte, igual ao motor padrão |
 | [x] | REQ-M3b — com `busyEnter: steer`, a espera encurta de fato | `acp-control.ts` (`_session/steering`) | `acp-control.test.ts`: só injeta se o agente anuncia `_meta.steering.supported` |
 | [x] | REQ-M4 — cancelar aborta o prompt ACP de verdade | `acp-control.ts` (`session/cancel`) | `acp-control.test.ts`: `session/cancel` cruza o fio, `$/cancel_request` não aparece |
 | [x] | REQ-M5 — turno que não termina não trava a fila | `bridge-loop.ts` (timeout) | `bridge-loop.test.ts`: turno mudo fecha com erro visível e destrava |
 | [x] | REQ-M6 — nada de histórico inventado, ordem válida | `bridge-loop.ts` | `bridge-loop.test.ts`: mensagem entra uma vez, revisões consecutivas |
 | [x] | `tsc --noEmit` na ponte e suíte fechada no `npm test` | limpo; 12 + 7 verificações |
 | [x] | Commit por caminho | `f618ebb`, `4ac6944`, `27368db` |
+
+### 3.1 Ressalvas do implementador (não são requisito, mas ficam registradas)
+
+- **Premissa da spec corrigida.** A spec dizia que "o evento durável já é feito pelo DSH antes de
+  chegar ao agente". É falso: `dsh-api-session-controller/lib/index.js:882-883` só chama
+  `agent.steer`/`agent.followup` e nunca anexa `user/message`. Quem grava o registro durável é o
+  inbox do motor — por isso a ponte grava `agent/inbox/spliced` via `session.append`
+  (`Session.append` existe em `dsh-session/lib/types/index.d.ts:246`). Verificado nesta sessão.
+- **Notificações `agent/inbox/inserted|claimed|discarded` não emitidas.** O motor padrão emite
+  (`dsh-agent-loop/lib/index.js:106,205-206`); a ponte não. Consumidores possíveis:
+  `dsh-goal-round-driver`, `dsh-subagent`, `dsh-user-questions`, `dsh-acp`. Se algum está ativo
+  neste perfil e depende do aviso: **não localizado**. Fora dos REQ-M1…M6.
+- **Projeção `inbox` não registrada** — ela só é registrada por `dsh-agent-loop`, desligado no
+  perfil claude-code (`materialize.ts:306-307`, confirmado). Isso afeta a *view* derivada, não o
+  acumulador do cliente, que lê o evento cru. Durabilidade de fila é B.5, fora de escopo.
+- **Ação visível de cancelar** é do cliente/DSH, não deste pacote; existência não verificada.
 
 ## 4. Achado de ambiente — fechado
 
