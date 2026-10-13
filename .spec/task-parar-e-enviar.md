@@ -29,6 +29,7 @@ Legenda: `[x]` feito e verificado · `[~]` código pronto, falta a prova combina
 | [x] | REQ-L5 — raiz somente leitura não derruba a parada | `removePidFile` best-effort + aviso | `stop.test.ts` caso 7 |
 | [x] | REQ-L7 — quem decide é a porta, não `kill(pid, 0)` | `portListening` no veredito | todos os casos de parada |
 | [x] | REQ-L8 — mata a árvore, não só o processo do harness | `killTree` (`-pid`) | `stop.test.ts` caso 5; `lifecycle.test.mjs` caso 1 |
+| [x] | **REQ-L9 (novo)** — fechar derruba o harness de qualquer janela, não só desta | `processes.ts` (`stopAll` com o registro) + `extension.ts` (`deactivate`) | `stopall.test.mjs`: listener que o gerenciador nunca subiu é derrubado; desligar a correção faz o teste falhar |
 | [x] | REQ-L3 — `deactivate` avisa os sobreviventes | `extension.ts` (`survivorWarning`) | `notify.test.mjs`: `deactivate` real não inventa aviso sem sobrevivente; a mensagem nomeia cada um |
 
 ## 3. Mensagem no pool (problema 2) — fechado
