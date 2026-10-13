@@ -50,7 +50,7 @@
   `node build-package.mjs` (o `.vsix` é um zip com as entradas sob `extension/`, então não precisa de
   ferramenta de terceiro) e **instalado no VS Code do dono** como `georgesq.harness-deck-vscode@0.1.0`;
   a aba **Harness Deck** apareceu na barra após recarregar a janela. Teste sem VS Code:
-  `node test/smoke.mjs`; teste do lançador: `npm test` (duas suítes).
+  `node test/smoke.mjs`; teste do lançador: `npm test` (três suítes: merge do patch, catálogo de modelos e workspaces).
 - [x] **Workspace por harness (defeito de uso corrigido).** O dono não conseguia apontar uma pasta
   nova para o harness que queria: a GUI só registra pasta no harness da porta aberta, e uma
   `DSH_HOME` por harness (REQ-02) faz cada harness ter a sua lista. Entrou
@@ -101,8 +101,44 @@ duas linhas são tratadas de forma diferente, porque não são igualmente nossas
   sempre regerada; o resto da rota é do harness e é preservado.
 
 Coberto por `packages/harness-deck-launcher/test/merge-patch.test.ts` (9 verificações) e
-`test/model-catalog.test.ts` (41, incluindo os dois defeitos do merge descritos abaixo) — e conferido
+`test/model-catalog.test.ts` (35, incluindo os dois defeitos do merge descritos abaixo) — e conferido
 na raiz real: troquei o modelo no perfil do `claude`, subi com `up` e a escolha sobreviveu.
+Contagem reconferida em 13/10/2026 (`grep -c '^ok'` em cada suíte).
+
+## Sessões **não** são compartilhadas entre harnesses (registrado em 13/10/2026)
+
+Pergunta do dono: *"as mensagens que o projeto trafega no claude, se eu for no mesmo projeto com o
+dsh, elas são compartilhadas, ou separadas?"* Resposta: **separadas**. Mesmo projeto, harness
+diferente, nada trafega de um para o outro — e isso é desenho, não defeito pendente.
+
+O que separa as conversas é a **`DSH_HOME`**, não o projeto. O caminho da pasta é só a chave que
+agrupa sessões **dentro** daquele harness; cada harness tem a própria `DSH_HOME`, logo o próprio
+banco de sessões, a própria lista de workspaces e o próprio token.
+
+| | harness `claude` | harness `dsh` |
+|---|---|---|
+| Raiz | `~/.harnessdeck/homes/claude` | `~/.harnessdeck/homes/dsh` |
+| Transcrição | `sessions/` e `storages/session_projcache/` — **26** sessões | idem — **11** sessões |
+| Ids | `session-b075165a…` (`harness-deck`), `session-a58ed007…` (`saas-hiperlocal-backend`) | `session-56428f87…` (`harness-deck`), `session-fd72c854…` (`lia`) |
+
+Verificado na raiz real em 13/10/2026: o projeto `harness-deck` está registrado como workspace nos
+**dois** harnesses, com sessões **diferentes** em cada um, e nenhum id de sessão se repete entre os
+dois. O `saas-hiperlocal-backend` aparece no `claude` com uma sessão e no `dsh` com zero.
+
+Segunda camada no caso do `claude`: as mensagens saem pelo subprocesso `claude-agent-acp`, que
+mantém o contexto dele no `~/.claude`. Copiar a pasta de sessões **não** levaria esse histórico
+junto — o `dsh` não tem esse lado.
+
+Consequências aceitas:
+
+- **Ganha-se** usar o mesmo projeto com dois motores sem um enxergar o estado do outro (é o REQ-02
+  funcionando).
+- **Perde-se** continuidade entre harnesses. O que sobrevive hoje é o que está em arquivo — o
+  `~/.dsh/AGENTS.md`, as skills e os `.md` do projeto —, não a conversa.
+- **Compartilhar de verdade** exigiria mudar o desenho: (a) uma `DSH_HOME` compartilhada por dois
+  perfis, que quebra o isolamento de workspace e de token, ou (b) export/import de sessão entre
+  harnesses, que precisa tratar o histórico do ACP à parte. **Nenhum dos dois está implementado**, e
+  nenhum está no escopo atual.
 
 ## Credenciais: `<raiz>/.env` é a única fonte (decidido em 12/10/2026)
 
