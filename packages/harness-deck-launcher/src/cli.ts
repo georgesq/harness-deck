@@ -159,7 +159,8 @@ Flags globais:
 
 --model pode ser repetido: a lista inteira é o que o seletor de modelo do DSH
 mostra dentro do harness, e o primeiro --model é o modelo inicial. Com um só
---model (ou nenhum) o harness oferece apenas esse modelo.
+--model o harness oferece apenas esse modelo. Sem nenhum --model, a lista
+lembrada é mantida; para zerar a lista, passe um --model.
 
 --provider aceita qualquer rota de LLM que o catálogo do DSH instalar conheça.
 Para openrouter, deepseek, anthropic, openai, google, ollama e lmstudio o deck já
@@ -273,9 +274,12 @@ function buildProvider(options: Options, previous?: HarnessProvider): HarnessPro
   const baseUrl = flag(options, 'base-url') ?? remembered?.baseUrl ?? PROVIDER_BASE_URLS[kind];
   const api = flag(options, 'api') ?? remembered?.api;
   // `--model` repeated builds the list the DSH model selector offers; the
-  // first one is also the harness' starting model. A single `--model` (or
-  // none) leaves `models` absent, which means "only this one".
-  const offered = models.length > 1 ? models : (remembered?.models ?? []);
+  // first one is also the harness' starting model. The flag's PRESENCE decides,
+  // not its length: `--model a` means "offer a", while passing no `--model` at
+  // all keeps the remembered list. Deciding by length meant a single `--model`
+  // silently kept the whole previous list — unmarking a model in the panel did
+  // not remove it, and the harness kept offering what the owner had dropped.
+  const offered = models.length > 0 ? models : (remembered?.models ?? []);
   return {
     kind,
     model,

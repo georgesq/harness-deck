@@ -156,5 +156,15 @@ await cli_('add', 'teste', '--force', '--provider', 'google', '--key-env', 'MINH
 assert.equal(credentialEnv(await live('teste')), 'MINHA_CHAVE');
 ok('--key-env continua vencendo a rota');
 
+// The list the harness offers is the list of `--model`, and one model is a
+// list of one. Deciding by the flag's length kept every previous model when a
+// single one was passed, so unmarking a model in the panel left it offered.
+await cli_('add', 'teste', '--force', '--provider', 'deepseek', '--model', 'deepseek-chat', '--model', 'deepseek-reasoner');
+assert.deepEqual((await entry('teste')).provider?.models, ['deepseek-chat', 'deepseek-reasoner']);
+await cli_('add', 'teste', '--force', '--provider', 'deepseek', '--model', 'deepseek-chat');
+assert.deepEqual((await entry('teste')).provider?.models, ['deepseek-chat'], 'a lista antiga sobreviveu a um --model so');
+assert.equal((await entry('teste')).provider?.model, 'deepseek-chat');
+ok('um --model so encolhe a lista oferecida; sem --model, ela e lembrada');
+
 await rm(home, { recursive: true, force: true });
 process.stdout.write(`\ntudo ok (${checks} verificações)\n`);
