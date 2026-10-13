@@ -118,6 +118,32 @@ function inputFor(prompt) {
   return asked.find((entry) => entry.prompt === prompt);
 }
 
+/**
+ * Forget the screens, then run one conversation and snapshot everything it put
+ * on screen. This is one *crossing* of the flow: the next one runs in the same
+ * process, so anything the flow itself kept between the two — a memoized
+ * catalog, a cached box, a counter — has a chance to show up on the second.
+ */
+async function crossing(argument, options, answers) {
+  reset();
+  script = answers;
+  const outcome = await configureProvider(argument, options);
+  return {
+    outcome,
+    offered: offered.map((screen) => ({
+      labels: [...screen.labels],
+      canPickMany: screen.options.canPickMany === true,
+      placeHolder: screen.options.placeHolder,
+    })),
+    asked: asked.map((box) => ({ prompt: box.prompt, value: box.value })),
+    shown: {
+      info: [...shown.info],
+      warning: [...shown.warning],
+      error: [...shown.error],
+    },
+  };
+}
+
 const entry = { name: 'teste', profile: 'teste', home: '', port: 3199, engine: 'dsh', enabled: true };
 const deck = await mkdtemp(join(tmpdir(), 'harness-deck-provider-'));
 await writeFile(
@@ -485,6 +511,83 @@ await check('sem pi-ai: avisa, pede o id do modelo e nunca oferece lista vazia',
     providerKeyEnv('google'),
   ]);
   assert.equal(outcome?.kind, 'google');
+});
+
+// REQ-C9, the guard: two crossings of the flow in one process. The suite is a
+// single process, so a record the flow keeps between runs — a memoized catalog,
+// a forgotten counter, a cached box — only shows up on the second crossing. The
+// first one reads a catalog and the second reads none: the lists the second puts
+// on screen have to be the ones *its own* input justifies, and the boxes it
+// opens have to be the ones its own route asks for.
+await check('repeticao: a segunda configuracao responde ao proprio catalogo, sem herdar tela', async () => {
+  const repeatDeck = await mkdtemp(join(tmpdir(), 'harness-deck-provider-repeat-'));
+  await writeFile(
+    join(repeatDeck, 'harnesses.json'),
+    JSON.stringify({ version: 1, home: repeatDeck, harnesses: [entry] }),
+  );
+  const shared = { home: repeatDeck, repoRoot, run };
+
+  let picks = 0;
+  /** Answers the conversation the way the owner would, counting each answer. */
+  const answers = (onPick = () => {}, onInput = () => {}) => ({
+    pick: (labels, options) => {
+      onPick(options.placeHolder);
+      if (options.placeHolder === 'Escolha a rota do provedor') return 'google';
+      if (options.placeHolder === 'Escolha os modelos de google') return ['gemini-3.7-flash'];
+      throw new Error(`lista inesperada: ${options.placeHolder}`);
+    },
+    input: (prompt, value) => {
+      onInput();
+      return prompt === 'Id do modelo' ? 'gemini-3.7-flash' : prompt === 'Outros modelos' ? '' : value;
+    },
+  });
+
+  let cataloguedInputs = 0;
+  let bareInputs = 0;
+  const catalogued = await crossing(
+    { entry },
+    { ...shared, loadCatalog: async () => fakeCatalog },
+    answers((placeHolder) => { if (placeHolder === 'Escolha a rota do provedor') picks += 1; }, () => (cataloguedInputs += 1)),
+  );
+  const bare = await crossing(
+    { entry },
+    { ...shared, loadCatalog: async () => undefined, loadProtocols: () => undefined },
+    answers((placeHolder) => { if (placeHolder === 'Escolha a rota do provedor') picks += 1; }, () => (bareInputs += 1)),
+  );
+  await rm(repeatDeck, { recursive: true, force: true });
+
+  // Both crossings really happened: a run that stopped early would leave empty
+  // snapshots that prove nothing.
+  assert.equal(picks, 2, 'as duas travessias nao chamaram a lista de rotas');
+  // The first crossing offers the catalog's routes and models, and warns about
+  // nothing: it read a catalog.
+  assert.deepEqual(
+    catalogued.offered[0]?.labels,
+    [...fakeCatalog.providers, 'outra rota (informar URL e protocolo)'],
+  );
+  assert.deepEqual(
+    catalogued.offered.find((screen) => screen.canPickMany)?.labels,
+    ['gemini-3.7-flash', 'outro id (digitar)'],
+  );
+  assert.equal(cataloguedInputs, 1, 'a travessia com catalogo nao pediu so a variavel da chave');
+  assert.equal(catalogued.shown.warning.length, 0, 'a travessia com catalogo avisou que nao leu');
+  // The second crossing reads nothing, so it offers only the deck's own table,
+  // opens no list of models and asks for the id by hand. A cached catalog — or
+  // any screen the first crossing left behind — shows up right here.
+  assert.deepEqual(
+    bare.offered[0]?.labels,
+    [...Object.keys(PROVIDER_ROUTES), 'outra rota (informar URL e protocolo)'],
+    'a lista de rotas da segunda travessia nao corresponde ao catalogo dela',
+  );
+  assert.equal(bare.offered.filter((screen) => screen.canPickMany).length, 0);
+  assert.deepEqual(
+    bare.asked.map((box) => box.prompt),
+    ['Id do modelo', 'Outros modelos', 'Variavel da chave'],
+    'a segunda travessia nao abriu as caixas que a propria rota dela pede',
+  );
+  assert.equal(bareInputs, 3, 'as caixas abertas na segunda travessia nao foram as dela');
+  assert.equal(bare.shown.warning.length, 1, 'a travessia sem catalogo nao avisou');
+  assert.deepEqual(bare.shown.error, []);
 });
 
 // REQ-R3 (protocol list): the options of a hand-declared route come from the
