@@ -161,6 +161,13 @@ Flags globais:
 mostra dentro do harness, e o primeiro --model é o modelo inicial. Com um só
 --model (ou nenhum) o harness oferece apenas esse modelo.
 
+--provider aceita qualquer rota de LLM que o catálogo do DSH instalar conheça.
+Para openrouter, deepseek, anthropic, openai, google, ollama e lmstudio o deck já
+sabe a URL e o nome da variável da chave. Uma rota fora dessa lista — um gateway
+interno, por exemplo — precisa de --base-url e --api (openai-completions,
+anthropic-messages ou google-generative-ai). Trocar de rota com --force descarta
+a URL e a chave lembradas da rota anterior, a menos que você as repita.
+
 Cada harness é um perfil do DSH, um processo, uma porta e um DSH_HOME próprio
 (<raiz>/homes/<nome>). É o DSH_HOME que separa workspaces e sessões (REQ-02);
 o perfil separa o motor. O ~/.dsh nunca é tocado (REQ-03).`;
