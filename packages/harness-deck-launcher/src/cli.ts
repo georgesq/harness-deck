@@ -258,19 +258,19 @@ function credentialEnv(entry: HarnessEntry): string {
 }
 
 /** Build the provider block of a new entry from the flags. */
-function buildProvider(options: Options): HarnessProvider {
-  const kind = (flag(options, 'provider') ?? DEFAULT_PROVIDER.kind) as HarnessProvider['kind'];
+function buildProvider(options: Options, previous?: HarnessProvider): HarnessProvider {
+  const kind = (flag(options, 'provider') ?? previous?.kind ?? DEFAULT_PROVIDER.kind) as HarnessProvider['kind'];
   if (kind !== 'openrouter' && kind !== 'deepseek') {
     fail(`--provider aceita "openrouter" ou "deepseek", não "${String(kind)}"`);
   }
   const models = options.flags.get('model') ?? [];
-  const model = models[0] ?? DEFAULT_PROVIDER.model;
-  const apiKeyEnv = flag(options, 'key-env') ?? PROVIDER_KEY_ENV[kind];
-  const baseUrl = flag(options, 'base-url');
+  const model = models[0] ?? previous?.model ?? DEFAULT_PROVIDER.model;
+  const apiKeyEnv = flag(options, 'key-env') ?? previous?.apiKeyEnv ?? PROVIDER_KEY_ENV[kind];
+  const baseUrl = flag(options, 'base-url') ?? previous?.baseUrl;
   // `--model` repeated builds the list the DSH model selector offers; the
   // first one is also the harness' starting model. A single `--model` (or
   // none) leaves `models` absent, which means "only this one".
-  const offered = models.length > 1 ? models : [];
+  const offered = models.length > 1 ? models : (previous?.models ?? []);
   return {
     kind,
     model,
@@ -280,7 +280,24 @@ function buildProvider(options: Options): HarnessProvider {
   };
 }
 
-/** Pick the port: the flag, or the first free one after the highest in use. */
+/**
+ * Pick the port: the flag, the port already registered, or the first free one.
+ *
+ * `--force` is for changing a field, not for losing the ones nobody mentioned:
+ * re-registering a harness to fix its key variable must not move it to another
+ * port (which is what a fresh allocation does) or away from the folder its
+ * workspaces live in.
+ *
+ * @param existing - entry already registered under this name, when there is one.
+ * @param flagValue - raw `--port`, when the caller passed it.
+ * @param used - ports taken by the other harnesses.
+ * @returns the port to register.
+ */
+function pickPort(existing: HarnessEntry | undefined, flagValue: string | undefined, used: HarnessEntry[]): number {
+  if (flagValue !== undefined) return Number.parseInt(flagValue, 10);
+  if (existing !== undefined) return existing.port;
+  return nextPort(used);
+}
 function nextPort(existing: HarnessEntry[]): number {
   const used = new Set(existing.map((entry) => entry.port));
   let candidate = FIRST_PORT;
@@ -299,26 +316,38 @@ async function commandAdd(home: string, options: Options): Promise<void> {
     fail(`--engine aceita "dsh" ou "claude-code", não "${engine}"`);
   }
   const registry = await loadRegistry(home);
-  if (findHarness(registry, name) !== undefined && !has(options, 'force')) {
+  const previous = findHarness(registry, name);
+  if (previous !== undefined && !has(options, 'force')) {
     fail(`harness "${name}" já existe (use --force para reescrever a entrada)`);
   }
   const portFlag = flag(options, 'port');
-  const port = portFlag !== undefined ? Number.parseInt(portFlag, 10) : nextPort(registry.harnesses);
+  const port = pickPort(previous, portFlag, registry.harnesses);
   if (!Number.isInteger(port) || port < 1 || port > 65535) fail(`--port inválido: "${String(portFlag)}"`);
   const clash = portOwner(registry, port, name);
   if (clash !== undefined) fail(`porta ${port} já é do harness "${clash.name}"`);
 
+  // A `--force` re-registration rewrites the entry, so every field the caller
+  // did not mention falls back to what was already registered rather than to
+  // the built-in default: `add --key-env X` is about the key, not about
+  // resetting the provider, the model list or the data folder.
+  const homeFlag = flag(options, 'dsh-home');
+  const baseUrlFlag = flag(options, 'base-url');
+  const noteFlag = flag(options, 'note');
+  const keyEnvFlag = flag(options, 'key-env');
+
   const entry: HarnessEntry = {
     name,
     profile: name,
-    home: flag(options, 'dsh-home') ?? join(harnessesHome(home), name),
+    home: homeFlag ?? previous?.home ?? join(harnessesHome(home), name),
     port,
     engine,
-    provider: buildProvider(options),
-    enabled: true,
-    ...(flag(options, 'base-url') ? { providerBaseUrl: flag(options, 'base-url') } : {}),
-    providerApiKeyEnv: flag(options, 'key-env') ?? DEFAULT_KEY_ENV[engine],
-    ...(flag(options, 'note') ? { note: flag(options, 'note') } : {}),
+    provider: buildProvider(options, previous?.provider),
+    enabled: previous?.enabled ?? true,
+    ...((baseUrlFlag ?? previous?.providerBaseUrl) === undefined
+      ? {}
+      : { providerBaseUrl: (baseUrlFlag ?? previous?.providerBaseUrl) as string }),
+    providerApiKeyEnv: keyEnvFlag ?? previous?.providerApiKeyEnv ?? DEFAULT_KEY_ENV[engine],
+    ...((noteFlag ?? previous?.note) === undefined ? {} : { note: (noteFlag ?? previous?.note) as string }),
   };
 
   const pluginPath = resolve(flag(options, 'plugin') ?? defaultPluginPath());
