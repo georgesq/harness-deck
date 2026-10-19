@@ -9,19 +9,16 @@ tudo entra por pull request.
 
 ## Estado
 
-Funciona de ponta a ponta para **um harness por processo**, aberto no navegador ou em aba do VS Code:
+**Versão 1.0 estável e fechada** (19/10/2026). Funciona de ponta a ponta para múltiplos harnesses (**DSH** e **Claude Code**), operando simultaneamente em abas dedicadas no VS Code ou no navegador:
 
-- CLI `harness-deck` (registro, materialização do perfil, subir/parar, log) em
+- CLI `harness-deck` (registro, materialização do perfil, ciclo de vida, rotas e workspaces) em
   [packages/harness-deck-launcher](packages/harness-deck-launcher);
-- painel do VS Code com uma aba por harness em
+- painel do VS Code com uma aba por harness e gerenciamento de processos em
   [packages/harness-deck-vscode](packages/harness-deck-vscode);
-- ponte ACP que faz o DSH rodar o loop do Claude Code em
+- ponte ACP estável que integra o loop do Claude Code ao DSH com streaming, aprovação de ferramentas e troca dinâmica de modelos em
   [packages/harness-deck-claude-code](packages/harness-deck-claude-code).
 
-Verificado: os dois harnesses sobem, o painel abre cada um na própria aba, a escolha de modelo
-sobrevive a reinício e uma mensagem no chat completa com o modelo configurado. O que está pronto,
-o que foi verificado e o que falta: [docs/status.md](docs/status.md). O que cada harness oferece de
-skill, plugin, MCP e subagente — e o que ainda não chega: [docs/capacidades-por-harness.md](docs/capacidades-por-harness.md).
+Verificado e homologado: os dois harnesses sobem e convivem na mesma janela do VS Code, cada um com seus próprios workspaces (`DSH_HOME` isolado por harness), a escolha de modelo persiste entre reinícios e as ferramentas pedem aprovação diretamente na UI. O que está pronto, o que foi verificado e o histórico: [docs/status.md](docs/status.md). O que cada harness oferece de skill, plugin, MCP e subagente: [docs/capacidades-por-harness.md](docs/capacidades-por-harness.md).
 
 ## Objetivo
 

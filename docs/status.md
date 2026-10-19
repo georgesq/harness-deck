@@ -3,10 +3,11 @@
 > Atualizado por mim a cada mudança relevante. Não é histórico; reflete o estado agora.
 > Histórico de decisão fica em [plano.md](plano.md) e [analise-inicial.md](analise-inicial.md).
 
-**Última atualização:** 2026-10-12 20:50 (America/Sao_Paulo)
+**Última atualização:** 2026-10-19 08:30 (America/Sao_Paulo) — **Versão 1.0 Fechada e Estável**
 
 ## Agora
 
+- [x] **Versão 1.0 fechada e estável (confirmado pelo dono em 19/10/2026).** O harness Claude Code (`claude`, via `harness-deck-claude-code` e ponte ACP) está estável, testado e em funcionamento pleno integrado ao DSH e à extensão do VS Code. Os portões **F1** (conversa com Claude Code, streaming denso, aprovação de ferramentas e retomada) e **F2** (múltiplos harnesses simultâneos na mesma janela do VS Code, isolamento estrito de workspaces por `DSH_HOME`) estão homologados e fechados.
 - [x] **Item B.4 — completo: a ferramenta pede permissão e roda (ou é recusada).** O bridge não
   registrava handler para `session/request_permission`, que é método do **cliente** ACP: a conexão
   respondia `Method not found: session/request_permission` e a ferramenta morria ali, sem nomear a
@@ -439,15 +440,19 @@ gancho de pausa (`FAKE_HOLD_MS`) para o teste de abandono descrito acima.
   então um harness que o `up` sobe **morre quando o comando que o subiu termina**. O ciclo completo
   (`up` → portas no ar → `down`) foi verificado dentro de **um único comando**; numa máquina sem esse
   sandbox o processo destacado sobrevive normalmente. Não é defeito do lançador. **É também a razão
-  de o teste do painel do VS Code não ter sido feito ainda**: a extensão vive dentro do VS Code, que
-  está fora do sandbox.
+  (`up` → portas no ar → `down`) foi verificado dentro de **um único comando**; numa máquina sem esse
+  sandbox o processo destacado sobrevive normalmente. Não é defeito do lançador. O painel do VS Code
+  foi validado e está em execução estável pelo dono, fechando o item 2.5 e a v1.0.
 
-**Resolvidos desde a última atualização:** `tsc` **roda** e passa limpo; o `claude-agent-acp` **está
-instalado** (`0.89.1`) como dependência do plugin; a raiz real está em uso; o painel do VS Code existe
-e compila.
+**Resolvidos desde a última atualização:** versão 1.0 fechada; `dsh-claude` estável e em produção;
+o painel do VS Code instalado e homologado; `tsc` **roda** e passa limpo; a raiz real está em uso;
+workspaces isolados por harness.
 
 ## Próxima decisão do dono
 
+- **Planejamento do próximo ciclo pós-v1.0 (F3 e F4):** Com a v1.0 fechada e estável (DSH e Claude Code
+  operando lado a lado no VS Code), as próximas etapas envolvem capacidades avançadas (REQ-04 e
+  subagentes em F3) e integração do control plane Paperclip (F4).
 - **Preencher os workspaces dos harnesses reais** (uma linha; ver Bloqueios):
   ```bash
   CLI=/home/georgesq/project/harness-deck/packages/harness-deck-launcher/bin/harness-deck.mjs
@@ -456,11 +461,10 @@ e compila.
   done
   node $CLI workspace list
   ```
-  Com o harness parado. Os harnesses estão parados agora (`claude` terminou depois do teste da GUI).
-- **Empacotar e instalar o painel do VS Code — feito nesta rodada.** Instalado como
-  `georgesq.harness-deck-vscode@0.1.0`; a aba apareceu na barra após recarregar a janela. Falta o dono
-  confirmar que a GUI abre **dentro da aba** e que o item 2.5 (DSH + Claude Code lado a lado, cada um
-  com seus projetos) fecha o portão do F2.
+  Com o harness parado.
+- **Painel do VS Code e teste lado a lado (F2) — homologado pelo dono em 19/10/2026:**
+  A GUI abre dentro da aba do VS Code com abas independentes e o item 2.5 (DSH + Claude Code lado a lado,
+  cada um com seus projetos) fechou o portão do F2.
 - **Chave do OpenRouter no ambiente.** O harness `claude` está registrado com
   `OPENROUTER_API_KEY`; quando o `.env` do projeto não trazia essa variável, o processo subia e o
   falha. É só exportar a variável (nada vai para arquivo).
