@@ -51,7 +51,7 @@ import {
 } from '@deepseek-ai/dsh-agent';
 import type { AgentCancelCause, Session, SessionSeq } from '@deepseek-ai/dsh-session';
 import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
-import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
+import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval';
 import {
   AssistantStreamAccumulator,
   BlockAssembler,
@@ -576,7 +576,7 @@ class LiveAssistantAttempt {
  * registration is automatically undone if this plugin unloads.
  */
 export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
-  static inject = ['agents', 'sessions', 'approval'];
+  static inject = ['agents', 'sessions', 'approval', 'sandboxPolicy'];
 
   private readonly config: ClaudeCodeAgentLoopConfig;
 
@@ -745,6 +745,7 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
       );
       return { outcome: { outcome: 'cancelled' } };
     }
+    if (this.isFullAccess(agent, approval)) return this.allowOnce(request);
     let outcome: ApprovalOutcome;
     try {
       outcome = await approval.request({
@@ -759,8 +760,35 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
       return { outcome: { outcome: 'cancelled' } };
     }
     if (outcome !== 'allowed-once') return { outcome: { outcome: 'cancelled' } };
-    // Prefer the protocol's own "allow once" option so the CLI records a real
-    // grant; fall back to the first option it offered.
+    return this.allowOnce(request);
+  }
+
+  /**
+   * Whether the session runs the `danger-full-access` preset: sandbox off and
+   * approval policy `never`.
+   *
+   * Under `never` the approval service rejects every ask before any answerer
+   * runs, so asking would turn "full access, no prompts" into "everything is
+   * blocked". Both knobs must match, so a lone `never` on a restricted sandbox
+   * still refuses. Any failure reading the policy reads as "not full access".
+   */
+  private isFullAccess(agent: ClaudeCodeAgent, approval: ApprovalService): boolean {
+    try {
+      const policy = approval.overrideOf(agent.session) ?? approval.config.policy;
+      if (policy !== 'never') return false;
+      const sandbox = (this.runtime.ctx as unknown as {
+        sandboxPolicy?: { resolve(req: { session: Session }): { mode: string } };
+      }).sandboxPolicy;
+      return sandbox?.resolve({ session: agent.session }).mode === 'danger-full-access';
+    } catch (error) {
+      process.stderr.write(`[claude-code] could not read permission policy: ${errorChain(error)}\n`);
+      return false;
+    }
+  }
+
+  /** Pick the protocol's "allow once" option so the CLI records a real grant. */
+  private allowOnce(request: acp.RequestPermissionRequest): acp.RequestPermissionResponse {
+    // Fall back to the first option it offered.
     const allow = request.options.find((option) => option.kind === 'allow_once') ?? request.options[0];
     if (allow === undefined) return { outcome: { outcome: 'cancelled' } };
     return { outcome: { outcome: 'selected', optionId: allow.optionId } };

@@ -543,6 +543,7 @@ async function watchSteers(params: {
       const message = await agent.waitForSteer(signal);
       if (message === undefined) return;
       const outcome = await acp.steer(promptTextOf([message]));
+      process.stderr.write(`[claude-code] steering outcome=${outcome} message=${message.id}\n`);
       if (outcome !== 'injected') return;
       // The running ACP turn owns the message now: drop it from the pending
       // queue (durably) and record it once, at the instant it was injected.
