@@ -23,10 +23,10 @@ Requisitos (detalhe em [analise-inicial.md](analise-inicial.md)):
 | 1.1 | Agent SDK falando com uma rota Anthropic-shaped (`ANTHROPIC_BASE_URL` + chave do ambiente) | ✅ |
 | 1.2 | Esqueleto do plugin `harness-deck-claude-code` (registra o `AgentFactory`, o criador de agente do DSH) | ✅ `ace5e67` |
 | 1.3 | Criar sessão e ver a resposta em streaming no chat — **substituído pela ponte ACP (B.1–B.5), ver abaixo** | ✅ resolvido por B.3 |
-| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ⏳ |
-| 1.5 | Retomar sessão depois de reiniciar — **vira B.5** | ⏳ |
+| 1.4 | Aprovação de ferramenta do SDK aparecendo na aprovação da UI — **vira B.4** | ✅ resolvido por B.4 |
+| 1.5 | Retomar sessão depois de reiniciar — **vira B.5** | ✅ resolvido por B.5 |
 
-**Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada.
+**Portão F1:** uma conversa com Claude Code no perfil isolado, com streaming, aprovação e retomada. ✅ **Fechado e estável na v1.0 (19/10/2026).**
 
 ### Decisão do dono em 12/10/2026: opção B (plugin reimplementando o motor) abandonada, opção C (ponte ACP) escolhida
 
@@ -50,11 +50,10 @@ de protocolo": o adapter já faz a parte difícil, o plugin só traduz `session/
 | B.1 | Subir `claude-agent-acp` como subprocesso; handshake ACP (`initialize` → `new_session`) | protocolo padrão, sem UI ainda | ✅ |
 | B.2 | Tradução de ida: `session/update` (texto chegando) → `SessionEvent` do DSH (`assistant/message` + `agent/assistant-stream`, ver [event-sequence.md](../packages/harness-deck-claude-code/docs/event-sequence.md)) | só texto, sem ferramenta | ✅ texto durável **e** ao vivo, com frames densos verificados em provedor real (OpenRouter) |
 | B.3 | Teste manual: pergunta simples no perfil isolado, resposta real do Claude Code no chat da Web GUI, em streaming | fecha o portão do F1 (streaming) | ✅ resposta desenhada **crescendo** no chat da GUI (navegador sem cabeça no perfil isolado, provedor real); o teste achou e corrigiu dois defeitos de escopo do agente — ver [status.md](status.md) |
-| B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ⏳ |
-| B.5 | Retomada de sessão (era 1.5) | depois do B.3 provado | ⏳ |
+| B.4 | Tradução de volta: tool call do ACP → aprovação da UI do DSH → resposta pro ACP | fecha aprovação (era 1.4) | ✅ **aprovado e recusado, os dois observados rodando** (12/10/2026). O bridge registra `session/request_permission` e roteia a pergunta para o serviço `approval` do DSH — ver [status.md](status.md). |
+| B.5 | Retomada de sessão e estabilização (era 1.5) | fechamento da v1.0 | ✅ **estável e operando em produção** (19/10/2026). |
 
-Corte do meio-termo: **B.1–B.3 primeiro**, prova o portão do F1 sem entrar em aprovação de
-ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
+Corte do meio-termo: **B.1–B.5 fechados e estáveis** no motor `claude` (`harness-deck-claude-code`).
 
 ## F2 — Vários harness no VS Code (REQ-01, REQ-02)
 
@@ -64,10 +63,10 @@ ferramenta. B.4/B.5 só depois de B.3 funcionar de ponta a ponta.
 | 2.1 | Registro de harness: um perfil por harness em `~/.harnessdeck`, cada um com porta própria | ✅ pacote `harness-deck-launcher` (registro JSON + materialização do perfil + comandos `list`/`add`/`rm`/`up`/`down`/`status`/`logs`), verificado com dois harness rodando juntos |
 | 2.2 | Verificar se a lista de workspaces fica separada por perfil ou se precisa de `DSH_HOME` por harness | ✅ **é o `DSH_HOME`, não o perfil** — dois perfis no mesmo `DSH_HOME` dividem `storages/workspace.json` e o log de sessões. Adotado um `DSH_HOME` por harness (`<raiz>/homes/<nome>`) |
 | 2.3 | Lançador: sobe e para os processos de todos os harness registrados | ✅ `harness-deck up` / `down`, processo destacado com pid e log por harness; `up` espera a porta responder |
-| 2.4 | Painel do VS Code: um painel por harness, na mesma janela | 🔄 **autorizado pelo dono em 12/10/2026.** Implementação própria (não fork): `packages/harness-deck-vscode`, painel = aba `WebviewPanel` por harness, lista lateral, sobe/para/inspeciona. Mapa do código da extensão de referência em [mapa-cirurgia-extension-vscode.md](mapa-cirurgia-extension-vscode.md). **Escolha de harness e de provedor/modelo decidida em 12/10/2026: o painel não tem seletor próprio — o modelo se escolhe no seletor nativo do DSH dentro de cada painel** (o registro guarda só o default inicial). Falta empacotar o `.vsix` e instalar |
-| 2.5 | Teste lado a lado: DSH e Claude Code abertos juntos, cada um com seus projetos | ⏳ |
+| 2.4 | Painel do VS Code: um painel por harness, na mesma janela | ✅ **instalado e verificado no VS Code** (`georgesq.harness-deck-vscode`), painel = aba `WebviewPanel` por harness, lista lateral, sobe/para/inspeciona, escolha nativa de modelo persistente. |
+| 2.5 | Teste lado a lado: DSH e Claude Code abertos juntos, cada um com seus projetos | ✅ **validado e estável** (19/10/2026): DSH e Claude Code operam simultaneamente na mesma janela sem misturar workspaces ou sessões. |
 
-**Portão F2:** dois harness na mesma janela, sem misturar workspaces, e o DSH da 3080 intacto.
+**Portão F2:** dois harness na mesma janela, sem misturar workspaces, e o DSH da 3080 intacto. ✅ **Fechado e homologado na v1.0 (19/10/2026).**
 
 ### Como o harness pode ser escolhido (verificado no código em 12/10/2026)
 

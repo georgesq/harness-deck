@@ -29,13 +29,25 @@ import {
   type HarnessEntry,
 } from './registry';
 import { HarnessProcesses, type HarnessState } from './processes';
+import type { StopOutcome } from './shared/process';
 import { HarnessProxy } from './proxy';
 import { HarnessTree } from './tree';
 import { openHarnessPanel, openPanelNames, revealHarnessPanel, updateHarnessPanel } from './panel';
 import { addWorkspace, hasWorkspace, listPaths, removeWorkspace } from './workspaces';
+import { configureProvider } from './provider';
 
 /** Poll interval of the tree, in milliseconds. */
 const POLL_MS = 5000;
+
+/**
+ * How long `deactivate` may spend stopping harnesses.
+ *
+ * VS Code does not wait indefinitely for deactivation, and an overrun is worse
+ * than a partial stop: the harness stays up either way, but an overrun also
+ * delays the shutdown with no report. What does not fit in this budget is
+ * reported to the owner (REQ-L2/L3).
+ */
+const DEACTIVATE_BUDGET_MS = 10_000;
 
 let processes: HarnessProcesses | undefined;
 let proxy: HarnessProxy | undefined;
@@ -161,14 +173,99 @@ async function startHarness(entry: HarnessEntry, silent = false): Promise<Harnes
   return state;
 }
 
+/** What the owner must see after a stop, independent of VS Code. */
+export interface StopReport {
+  /** Severity of the notification. */
+  severity: 'info' | 'warning';
+  /** Sentence shown in the notification and written to the log. */
+  message: string;
+  /** Extra line for the output channel, when the message needs context. */
+  detail?: string;
+  /** Button offered with the notification, when there is a next step. */
+  action?: 'Ver log';
+}
+
+/**
+ * Decide what to tell the owner after one stop attempt.
+ *
+ * Pure on purpose: the wording is the requirement (REQ-P6), and a wording that
+ * only ever reaches the output channel is a wording the owner never sees.
+ *
+ * @param entry - harness that was asked to stop.
+ * @param outcome - what the stop path actually did.
+ * @returns the notification to show and the line to log.
+ */
+export function stopReport(entry: HarnessEntry, outcome: StopOutcome): StopReport {
+  if (outcome.stale) {
+    // Never say "parado" while the port answers: that lie is the bug this whole
+    // path exists to remove.
+    const pid = outcome.pid !== undefined ? ` (pid ${String(outcome.pid)})` : '';
+    return {
+      severity: 'warning',
+      message: `O harness "${entry.name}" nao parou: a porta ${entry.port} continua respondendo${pid}.`,
+      action: 'Ver log',
+    };
+  }
+  if (!outcome.stopped) {
+    return {
+      severity: 'info',
+      message: `O harness "${entry.name}" nao estava rodando; nada a parar.`,
+    };
+  }
+  const detail = outcome.discovered
+    ? `o dono da porta nao era o do pid file, pid ${String(outcome.pid)}`
+    : undefined;
+  return {
+    severity: 'info',
+    message: `O harness "${entry.name}" parou (${outcome.signal}).`,
+    ...(detail === undefined ? {} : { detail }),
+  };
+}
+
+/**
+ * What to warn the owner about when the closing budget did not stop everything.
+ *
+ * The names are the whole point: a warning that says "some harness is still up"
+ * leaves the owner to guess which one (REQ-L3).
+ *
+ * @param survivors - names reported by `stopAll`.
+ * @returns the sentence shown in the warning notification.
+ */
+export function survivorWarning(survivors: readonly string[]): string {
+  return (
+    `Estes harnesses continuam rodando em segundo plano: ${survivors.join(', ')}. ` +
+    'Rode `harness-deck down` (ou pare pela paleta de comandos) para encerrar.'
+  );
+}
+
 /** Stop a harness and update whatever is on screen. */
 async function stopHarness(entry: HarnessEntry): Promise<void> {
-  const stopped = await runtime().stop(entry);
-  if (!stopped) {
-    output?.appendLine(`[${entry.name}] nao ha processo desta janela para parar`);
+  const outcome = await runtime().stop(entry);
+  const report = stopReport(entry, outcome);
+  output?.appendLine(`[${entry.name}] ${report.message}${report.detail === undefined ? '' : ` — ${report.detail}`}`);
+  if (report.severity === 'warning') {
+    void window.showWarningMessage(report.message, ...(report.action === undefined ? [] : [report.action])).then(
+      (choice: string | undefined) => {
+        if (choice === 'Ver log') void showLog(entry);
+      },
+    );
+  } else {
+    void window.showInformationMessage(report.message);
   }
   updateHarnessPanel(entry, await runtime().inspect(entry));
   await refresh();
+}
+
+/**
+ * Stop then start one harness.
+ *
+ * The one restart path in the extension: the `harnessDeck.restartHarness`
+ * command and the action offered after configuring a provider both land here,
+ * so "Reiniciar agora" cannot drift into a second, weaker restart (REQ-C8).
+ */
+export async function restartHarness(entry: HarnessEntry): Promise<void> {
+  await stopHarness(entry);
+  await startHarness(entry);
 }
 
 /** Open (and, when configured, start) the panel of one harness. */
@@ -298,8 +395,15 @@ function registerCommands(context: ExtensionContext): void {
   register('harnessDeck.restartHarness', async (argument) => {
     const entry = await resolveEntry(argument);
     if (entry === undefined) return;
-    await stopHarness(entry);
-    await startHarness(entry);
+    await restartHarness(entry);
+  });
+  register('harnessDeck.configureProvider', async (argument) => {
+    await configureProvider(argument, {
+      home: deckHome(),
+      dshCommand: dshCommand(),
+      refresh,
+      restart: restartHarness,
+    });
   });
   register('harnessDeck.openInBrowser', async (argument) => {
     const entry = await resolveEntry(argument);
@@ -366,8 +470,23 @@ export async function deactivate(): Promise<void> {
   if (poller !== undefined) clearInterval(poller);
   proxy?.dispose();
   proxy = undefined;
+  // Closing the window has to take the harnesses with it: they were spawned
+  // detached, so nothing else would. `deactivate` gets a bounded budget — VS Code
+  // does not wait forever — and what did not fit is reported instead of being
+  // silently left running (REQ-L1/L2/L3).
   const stopOnExit = workspace.getConfiguration('harnessDeck').get<boolean>('stopOnExit', true);
-  if (stopOnExit) await processes?.stopAll();
+  if (!stopOnExit || processes === undefined) return;
+  // The registry goes along so a harness started by a former window — reload,
+  // reinstall, second window — is still this window's to stop.
+  const result = await processes.stopAll(DEACTIVATE_BUDGET_MS, await listHarnesses());
+  if (result.stopped.length > 0) {
+    output?.appendLine(`[harness-deck] encerrados no fechamento: ${result.stopped.join(', ')}`);
+  }
+  if (result.survivors.length > 0) {
+    const message = survivorWarning(result.survivors);
+    output?.appendLine(`[harness-deck] ${message}`);
+    void window.showWarningMessage(message);
+  }
 }
 
 /** Exported for the smoke test: render the panel HTML without VS Code. */

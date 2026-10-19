@@ -7,9 +7,14 @@ dist/
 
 # gh CLI token, created in-session because $HOME/.config was read-only
 .gh-config/
+
+# Local editor state: holds the deck home path of this machine, not a project
+# decision, so it must not travel in the repository.
+.vscode/
 .run/
 # Throwaway probe/smoke scripts and their logs (repo root)
 .run-*
 
 # Plugin build output: produced by `npm run build` in the package
 lib/
+dist-test/

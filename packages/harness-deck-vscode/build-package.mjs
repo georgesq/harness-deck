@@ -32,9 +32,22 @@ const tsc = (() => {
   }
   throw new Error('typescript nao encontrado; rode npm install neste pacote');
 })();
+// The stop path is one file shared with the CLI: refresh the copy before
+// compiling so the .vsix never ships a stale one.
+execFileSync(process.execPath, [join(here, '..', 'harness-deck-launcher', 'scripts', 'sync-shared.mjs')], {
+  stdio: 'inherit',
+});
 execFileSync(process.execPath, [tsc, '-p', 'tsconfig.json'], { cwd: here, stdio: 'inherit' });
 
-for (const file of ['extension.js', 'panel.js', 'processes.js', 'registry.js', 'tree.js']) {
+for (const file of [
+  'extension.js',
+  'panel.js',
+  'processes.js',
+  'provider.js',
+  'registry.js',
+  'tree.js',
+  'shared/process.js',
+]) {
   statSync(join(here, 'lib', file));
 }
 

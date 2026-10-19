@@ -46,28 +46,33 @@ import {
   type AgentStatus,
   type AssistantStreamFrame,
   type CreateAgentOptions,
-  type Inbox,
   type InboxTarget,
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
-import type { Session, SessionSeq, TurnEndReason } from '@deepseek-ai/dsh-session';
+import type { AgentCancelCause, Session, SessionSeq } from '@deepseek-ai/dsh-session';
+import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
+import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
 import {
   AssistantStreamAccumulator,
   BlockAssembler,
-  EMPTY_RESPONSE_CODE,
   LlmAttemptId,
-  LlmError,
   createAssistantMessage,
   errorChain,
   type AssistantStreamRecord,
-  type LlmFailure,
-  type MessageId,
   type StreamChunk,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm';
 import { createScope, type Scope } from '@deepseek-ai/dsh-scope';
 import * as acp from '@agentclientprotocol/sdk';
 import { ensureModelProxy } from './model-proxy.js';
+import {
+  SimpleInbox,
+  decideDrain,
+  runBridgeLoop,
+  type LiveTurnControl,
+  type LoopAttemptFactory,
+} from './bridge-loop.js';
+import { LiveAcpSession, steeringSupported } from './acp-control.js';
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -90,7 +95,30 @@ export interface ClaudeCodeAgentLoopConfig {
    * package's dependencies.
    */
   readonly acpBinPath?: string;
+  /**
+   * Inactivity ceiling for one ACP prompt, in milliseconds.
+   *
+   * A prompt that produces no update for this long is cancelled and its turn
+   * is closed with a visible error, so a wedged agent cannot hold the inbox
+   * forever (REQ-M5). It is an INACTIVITY ceiling, not a turn budget: every
+   * delivered update restarts it, so a long turn that keeps streaming or
+   * calling tools is never interrupted by it.
+   */
+  readonly promptIdleTimeoutMs?: number;
 }
+
+/** Default {@link ClaudeCodeAgentLoopConfig.promptIdleTimeoutMs}: 30 minutes. */
+const DEFAULT_PROMPT_IDLE_TIMEOUT_MS = 30 * 60_000;
+
+/**
+ * How long the bridge waits for the stop after it sends `session/cancel`.
+ *
+ * The CLI itself arms a 30s floor before it forces a wedged prompt loop to
+ * return `cancelled` (`DEFAULT_FORCE_CANCEL_GRACE_MS`,
+ * `@agentclientprotocol/claude-agent-acp/dist/acp-agent.js:80`), so this stays
+ * above it and the stop below is bounded in practice.
+ */
+const CANCEL_GRACE_MS = 35_000;
 
 /** Resolve the bundled `claude-agent-acp` executable's JS entrypoint. */
 async function resolveAcpBinPath(configured: string | undefined): Promise<string> {
@@ -127,98 +155,78 @@ async function acpChildEnv(): Promise<NodeJS.ProcessEnv> {
   return { ...process.env, ANTHROPIC_BASE_URL: proxy.baseUrl };
 }
 
+/** The `model` config option the ACP agent advertises on every session. */
+const MODEL_CONFIG_ID = 'model';
+
 /**
- * In-memory, non-durable `Inbox`. Real durability (surviving a process
- * restart) is item B.5's job — this queue only needs to survive for the
- * life of one `ClaudeCodeAgent`, so `send`/`followup` can hand work to
- * `runBridge` without the caller blocking.
+ * Point the ACP session at the model the DSH session selected.
  *
- * TODO(B.5): back this with `session.append('agent/inbox/spliced', ...)`
- * (the durable event `dsh-agent`'s `types.ts` documents) once resume needs
- * to reconstruct pending input after a restart.
+ * The DSH's own model selection and the Claude Code CLI's are two different
+ * things, and only the DSH side knows what the owner picked. Left alone, the
+ * CLI keeps its own default — and because the deck hands it a catalog id
+ * (`claude-sonnet-5-5`), the CLI resolves that id against its own catalog and
+ * can land on a different model than the selector shows. That is the whole of
+ * "it always opens Opus": the alias wins, the selection is decoration.
+ *
+ * The model is looked up in `HARNESS_DECK_MODEL_MAP`, which the launcher built
+ * from the registry, so a slug the registry does not offer is refused here
+ * rather than silently sent to a provider that would reject it.
+ *
+ * Failure is not fatal: a session whose model could not be pinned still runs on
+ * the CLI's default, and refusing the session would be worse than the drift.
+ * The reason is logged so the drift is visible instead of silent.
+ *
+ * @param ctx - ACP client context, for the `session/set_config_option` call.
+ * @param sessionId - the ACP session to configure.
+ * @param slug - provider slug from the DSH selection, when there is one.
  */
-class SimpleInbox implements Inbox {
-  private nextTurnQueue: UserMessage[] = [];
-  private nextStepQueue: UserMessage[] = [];
-  private readonly onWake: () => void;
-
-  constructor(onWake: () => void) {
-    this.onWake = onWake;
+async function applySelectedModel(
+  ctx: acp.ClientContext,
+  sessionId: string,
+  slug: string | undefined,
+): Promise<void> {
+  if (slug === undefined) return;
+  const rawMap = process.env.HARNESS_DECK_MODEL_MAP;
+  if (!rawMap) return;
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(rawMap) as Record<string, string>;
+  } catch {
+    return;
   }
-
-  get nextTurn(): readonly UserMessage[] {
-    return this.nextTurnQueue;
+  const catalog = Object.entries(map).find(([, value]) => value === slug)?.[0];
+  if (catalog === undefined) {
+    process.stderr.write(
+      `[claude-code] model "${slug}" is not in the deck's model map; the session keeps the CLI default\n`,
+    );
+    return;
   }
-
-  get nextStep(): readonly UserMessage[] {
-    return this.nextStepQueue;
-  }
-
-  clear(): void {
-    this.nextStepQueue = [];
-    this.nextTurnQueue = [];
-  }
-
-  append(target: InboxTarget, message: UserMessage): void {
-    this.listFor(target).push(message);
-    this.onWake();
-  }
-
-  prepend(target: InboxTarget, message: UserMessage): void {
-    this.listFor(target).unshift(message);
-    this.onWake();
-  }
-
-  replace(messageId: MessageId, newMessage: UserMessage): boolean {
-    for (const list of [this.nextTurnQueue, this.nextStepQueue]) {
-      const index = list.findIndex((message) => message.id === messageId);
-      if (index !== -1) {
-        list[index] = newMessage;
-        return true;
-      }
-    }
-    return false;
-  }
-
-  remove(messageId: MessageId): boolean {
-    for (const list of [this.nextTurnQueue, this.nextStepQueue]) {
-      const index = list.findIndex((message) => message.id === messageId);
-      if (index !== -1) {
-        list.splice(index, 1);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  splice(target: InboxTarget, start: number, deleteCount: number, inserted: UserMessage[]): UserMessage[] {
-    const removed = this.listFor(target).splice(start, deleteCount, ...inserted);
-    if (inserted.length > 0) this.onWake();
-    return removed;
-  }
-
-  /** Pull the next pending message across both lists, next-step first. */
-  shift(): UserMessage | undefined {
-    return this.nextStepQueue.shift() ?? this.nextTurnQueue.shift();
-  }
-
-  private listFor(target: InboxTarget): UserMessage[] {
-    return target === 'next-step' ? this.nextStepQueue : this.nextTurnQueue;
+  try {
+    await ctx.request(acp.methods.agent.session.setConfigOption, {
+      sessionId,
+      configId: MODEL_CONFIG_ID,
+      value: catalog,
+    });
+  } catch (error) {
+    process.stderr.write(
+      `[claude-code] could not pin model "${slug}" (${catalog}): ${errorChain(error)}\n`,
+    );
   }
 }
 
 /**
  * Minimal `Agent` facade satisfying `@deepseek-ai/dsh-agent`'s runtime
  * contract. Unlike `dsh-agent-loop`'s `ReactLoopAgent`, this has no turn/step
- * driving logic of its own: `cancel`/`whenIdle`/`runMaintenance` are thin,
- * honest implementations of the documented contract, and `send`/`followup`/
- * `steer`/`inject` all funnel into the same `Inbox` that `runBridge` drains.
+ * driving logic of its own: `whenIdle`/`runMaintenance` are thin, honest
+ * implementations of the documented contract, `send`/`followup`/`steer`/
+ * `inject` all funnel into the same `Inbox`, and the turn/step scheduling
+ * lives in `bridge-loop.ts`.
  *
- * TODO(B.4): `cancel` does not yet abort an in-flight ACP prompt — it only
- * flips `status` back to `idle` and clears queued input when `keepInbox` is
- * not set. Wiring real abort needs the ACP `session/cancel` request, which
- * calls into `ctx.agent` from `runBridge`'s closure; deferred with tool-call
- * approval since both need the live `ActiveSession`.
+ * `cancel` aborts the ACP prompt for real: it hands the cause to the scheduler
+ * and asks the live ACP session to send `session/cancel` (REQ-M4). It does NOT
+ * flip `status` back to `idle` — the turn is still open on the ACP side, and
+ * pretending otherwise would let the next turn start on top of it. The
+ * scheduler closes the turn and goes idle.
  */
 class ClaudeCodeAgent implements Agent {
   readonly id: Session['id'];
@@ -248,6 +256,15 @@ class ClaudeCodeAgent implements Agent {
   private wakeWaiters: Array<() => void> = [];
 
   /**
+   * Control of the ACP prompt currently in flight, attached by the scheduler
+   * for the duration of one step. `cancel` reaches the ACP session through it.
+   */
+  private liveTurn: LiveTurnControl | undefined;
+
+  /** Cancellation recorded by {@link cancel} and taken by the scheduler. */
+  private cancelCause: AgentCancelCause | undefined;
+
+  /**
    * @param loopCtx - the engine plugin's own (live) context; the scope is
    * minted under it, so the Agent inherits the engine's dependency API.
    */
@@ -257,13 +274,41 @@ class ClaudeCodeAgent implements Agent {
     this.options = options;
     this.scope = createScope(loopCtx, this);
     this.ctx = this.scope.ctx;
-    this.inbox = new SimpleInbox(() => this.wake());
+    // Pending input is recorded durably as `agent/inbox/spliced`, the event
+    // `dsh-agent` documents for exactly this queue, so a reload can
+    // reconstruct what was still waiting instead of losing it with the
+    // process. The `inbox` session projection that folds those events is NOT
+    // registered here: only `dsh-agent-loop` registers it
+    // (`dsh-agent-loop/lib/index.js:1559`) and that package is disabled in
+    // this profile.
+    this.inbox = new SimpleInbox(
+      () => this.wake(),
+      (splice) => {
+        session.append('agent/inbox/spliced', splice);
+      },
+    );
   }
 
-  cancel(_cause: unknown, options?: { keepInbox?: boolean }): void {
+  /**
+   * Provider slug this agent must run on, from the DSH model selection.
+   *
+   * `AgentOptions.model` is the slug the registry advertises
+   * (`anthropic/claude-sonnet-5.5`), not the CLI's catalog id — the loopback
+   * gateway is what turns one into the other. `undefined` means "whatever the
+   * CLI was started with", which is the registry default.
+   */
+  get selectedModel(): string | undefined {
+    const model = this.options.model;
+    return typeof model === 'string' && model.trim() !== '' ? model.trim() : undefined;
+  }
+
+  cancel(cause: AgentCancelCause, options?: { keepInbox?: boolean }): void {
     if (!options?.keepInbox) this.inbox.clear();
-    this.status = 'idle';
-    this.settleIdle();
+    // Outside a turn there is nothing to abort, and recording the cause would
+    // poison the next turn's `turn/end`.
+    if (this.status !== 'running') return;
+    this.cancelCause = cause;
+    this.liveTurn?.requestCancel();
   }
 
   async whenIdle(): Promise<void> {
@@ -292,27 +337,60 @@ class ClaudeCodeAgent implements Agent {
     this.inbox.append('next-step', message);
   }
 
-  /** Resolve the next `waitForWork` call, or block until `send`/`followup` wakes it. */
-  async waitForWork(signal: AbortSignal): Promise<UserMessage | undefined> {
+  /**
+   * Resolve the next `waitForWork` call, or block until input arrives.
+   *
+   * The wake reports WHICH list woke it (`next-step` first), which is what
+   * decides whether the turn about to open owns a queued turn or only a steered
+   * message — the same classification `dsh-agent-loop` makes when it wakes.
+   */
+  async waitForWork(signal: AbortSignal): Promise<{ readonly target: InboxTarget } | undefined> {
     for (;;) {
-      const message = this.inbox.shift();
+      const decision = decideDrain(this.inbox, false);
+      if (decision.kind === 'start-turn') return { target: decision.target };
+      if (signal.aborted) return undefined;
+      await this.waitForWake(signal);
+    }
+  }
+
+  /** Block until `next-step` input arrives, or the signal aborts. */
+  async waitForSteer(signal: AbortSignal): Promise<UserMessage | undefined> {
+    for (;;) {
+      const message = this.inbox.nextStep[0];
       if (message !== undefined) return message;
       if (signal.aborted) return undefined;
-      await new Promise<void>((resolve) => {
-        const onAbort = () => {
-          cleanup();
-          resolve();
-        };
-        const cleanup = () => {
-          signal.removeEventListener('abort', onAbort);
-        };
-        this.wakeWaiters.push(() => {
-          cleanup();
-          resolve();
-        });
-        signal.addEventListener('abort', onAbort);
-      });
+      await this.waitForWake(signal);
     }
+  }
+
+  /** Attach (or detach) the control of the ACP prompt currently in flight. */
+  attachTurn(control: LiveTurnControl | undefined): void {
+    this.liveTurn = control;
+  }
+
+  /** Take the recorded cancellation cause, if any, clearing it. */
+  consumeCancelCause(): AgentCancelCause | undefined {
+    const cause = this.cancelCause;
+    this.cancelCause = undefined;
+    return cause;
+  }
+
+  /** Sleep until `send`/`followup`/`steer` wakes this agent, or the signal aborts. */
+  private async waitForWake(signal: AbortSignal): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const onAbort = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        signal.removeEventListener('abort', onAbort);
+      };
+      this.wakeWaiters.push(() => {
+        cleanup();
+        resolve();
+      });
+      signal.addEventListener('abort', onAbort);
+    });
   }
 
   markRunning(): void {
@@ -498,7 +576,7 @@ class LiveAssistantAttempt {
  * registration is automatically undone if this plugin unloads.
  */
 export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
-  static inject = ['agents', 'sessions'];
+  static inject = ['agents', 'sessions', 'approval'];
 
   private readonly config: ClaudeCodeAgentLoopConfig;
 
@@ -635,6 +713,60 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
   }
 
   /**
+   * Answer one ACP permission question with the DSH's own approval decision.
+   *
+   * The CLI asks before running a tool, and the client is who answers. Without
+   * this handler the ACP connection answers `Method not found:
+   * session/request_permission` and the tool never runs — observed on
+   * 12/10/2026 as a web search that silently never happened.
+   *
+   * The question is routed through the DSH's `approval` service rather than
+   * answered locally, so the GUI's approval panel is what decides, the ask and
+   * its outcome land in the session's audit log, and the sandbox/approval
+   * preset the owner picked keeps applying.
+   *
+   * Only `allowed-once` becomes a grant: `rejected`, `cancelled` and the
+   * fail-closed `unavailable` all map onto ACP's `cancelled` outcome, which is
+   * the protocol's way of saying "no option was chosen". A missing service is
+   * therefore a refusal, never a silent allow.
+   *
+   * @param agent - the agent on whose behalf the tool would run.
+   * @param request - the ACP permission request.
+   * @returns the ACP outcome for the asked options.
+   */
+  private async decidePermission(
+    agent: ClaudeCodeAgent,
+    request: acp.RequestPermissionRequest,
+  ): Promise<acp.RequestPermissionResponse> {
+    const approval = this.runtime.ctx.get('approval');
+    if (approval === undefined) {
+      process.stderr.write(
+        `[claude-code] no approval service; refusing "${request.toolCall.title ?? 'tool'}"\n`,
+      );
+      return { outcome: { outcome: 'cancelled' } };
+    }
+    let outcome: ApprovalOutcome;
+    try {
+      outcome = await approval.request({
+        agent,
+        toolName: request.toolCall.title ?? 'tool',
+        ...(request.toolCall.toolCallId === undefined ? {} : { callId: request.toolCall.toolCallId as ToolCallId }),
+      });
+    } catch (error) {
+      // An ask outside an open turn rejects by contract; refusing the tool is
+      // the correct reading of "we could not ask".
+      process.stderr.write(`[claude-code] approval ask failed: ${errorChain(error)}\n`);
+      return { outcome: { outcome: 'cancelled' } };
+    }
+    if (outcome !== 'allowed-once') return { outcome: { outcome: 'cancelled' } };
+    // Prefer the protocol's own "allow once" option so the CLI records a real
+    // grant; fall back to the first option it offered.
+    const allow = request.options.find((option) => option.kind === 'allow_once') ?? request.options[0];
+    if (allow === undefined) return { outcome: { outcome: 'cancelled' } };
+    return { outcome: { outcome: 'selected', optionId: allow.optionId } };
+  }
+
+  /**
    * Connect to the spawned ACP agent, open one session on it scoped to
    * `cwd`, and drive it from `agent`'s inbox: each pending `UserMessage`
    * becomes one ACP `prompt`, whose `session/update` notifications are
@@ -655,130 +787,93 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     const stream = acp.ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout));
     const session = agent.session;
 
-    await acp.client({ name: 'harness-deck-claude-code' }).connectWith(stream, async (ctx) => {
-      await ctx.request(acp.methods.agent.initialize, {
+    await acp
+      .client({ name: 'harness-deck-claude-code' })
+      .onRequest(acp.methods.client.session.requestPermission, (request) =>
+        this.decidePermission(agent, request.params),
+      )
+      .connectWith(stream, async (ctx) => {
+      // The response is kept, not discarded: it is where the CLI advertises
+      // the vendor steering extension the bridge uses to shorten a steer's
+      // wait (see acp-control.ts).
+      const initialize = await ctx.request(acp.methods.agent.initialize, {
         protocolVersion: acp.PROTOCOL_VERSION,
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
       });
 
       return ctx.buildSession(cwd).withSession(async (acpSession) => {
-        let turn = 0;
+        // The model the DSH session is running on, applied to the ACP session
+        // before the first prompt. Without this the CLI keeps its own
+        // `ANTHROPIC_MODEL` default and resolves a family alias on its own —
+        // observed on 12/10/2026 as `phase=set-model model=sonnet`, which the
+        // CLI answered by running Opus regardless of what the DSH selector
+        // showed.
+        await applySelectedModel(ctx, acpSession.sessionId, agent.selectedModel);
         let attempt = 0;
         // One revision counter per agent lifecycle: the GUI's accumulator
         // rejects any frame that does not follow the previous one by exactly
         // one, so attempts share the counter instead of restarting it.
         let revision = 0;
         const nextRevision = () => (revision += 1);
-        for (;;) {
-          const userMessage = await agent.waitForWork(signal);
-          if (userMessage === undefined) return;
 
-          agent.markRunning();
-          // The session controller only learns that a turn is in flight from
-          // `agent/status` (`dsh-api-session-controller/lib/index.js:2884`), which
-          // the default engine emits and this bridge did not — without it the GUI
-          // never mounts its running indicator.
-          dispatch.emit('agent/status', { status: 'running' });
-          turn += 1;
-          const step = 1;
-          session.append('turn/start', { turn });
-          session.append('step/start', { turn, step });
-          // The default engine appends the user's message itself when it
-          // consumes the inbox (dsh-agent-loop/lib/index.js:1061). With the
-          // default engine replaced, nobody else does it — without this the
-          // chat would show the answer with no question above it.
-          session.append('user/message', userMessage, { surfaceOp: 'append' });
-
-          const promptText = userMessage.content
-            .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-            .map((block) => block.text)
-            .join('\n');
-          const live = new LiveAssistantAttempt(
+        const live = new LiveAcpSession(ctx, acpSession, steeringSupported(initialize));
+        const attempts: LoopAttemptFactory = (turn, step) => {
+          const frame = new LiveAssistantAttempt(
             session.id,
             (attempt += 1),
             nextRevision,
             turn,
             step,
-            (frame) => dispatch.emit('agent/assistant-stream', { frame }),
+            (event) => dispatch.emit('agent/assistant-stream', { frame: event }),
           );
-          live.start();
+          return {
+            start: () => frame.start(),
+            pushText: (text) => frame.pushText(text),
+            get hasVisibleText() {
+              return frame.hasVisibleText;
+            },
+            // `settle` commits the durable event and only then publishes the
+            // terminal frame carrying that event's seq, so a client can never
+            // see the live stream end before the text it renders is durable.
+            settleMessage: () =>
+              frame.settle('assistant/message', () =>
+                session.append(
+                  'assistant/message',
+                  {
+                    turn,
+                    step,
+                    message: createAssistantMessage({
+                      content: frame.blocks(),
+                      source: { provider: 'claude-agent-acp', model: 'claude-code' },
+                    }),
+                    stream: frame.stream,
+                  },
+                  { surfaceOp: 'append' },
+                ).seq,
+              ),
+            // Records the attempt without inventing model-visible history: the
+            // same settlement the default engine uses for an attempt that never
+            // became a message (`dsh-agent-loop/lib/index.js:1101`).
+            settleAttempt: () =>
+              frame.settle('assistant/attempt', () =>
+                session.append('assistant/attempt', { turn, step, stream: frame.stream }).seq,
+              ),
+            abandon: () => frame.abandon(),
+          };
+        };
 
-          // Records the attempt without inventing model-visible history: the
-          // same settlement the default engine uses for an attempt that never
-          // became a message (`dsh-agent-loop/lib/index.js:1101`).
-          const settleAttempt = () =>
-            live.settle('assistant/attempt', () =>
-              session.append('assistant/attempt', { turn, step, stream: live.stream }).seq,
-            );
-
-          // `settle` commits the durable event and only then publishes the
-          // terminal frame carrying that event's seq, so a client can never
-          // see the live stream end before the text it renders is durable.
-          const settleMessage = () =>
-            live.settle('assistant/message', () =>
-              session.append(
-                'assistant/message',
-                {
-                  turn,
-                  step,
-                  message: createAssistantMessage({
-                    content: live.blocks(),
-                    source: { provider: 'claude-agent-acp', model: 'claude-code' },
-                  }),
-                  stream: live.stream,
-                },
-                { surfaceOp: 'append' },
-              ).seq,
-            );
-
-          let turnEnds: TurnEndReason = { kind: 'completed' };
-          try {
-            acpSession.prompt(promptText);
-
-            for (;;) {
-              const update = await acpSession.nextUpdate();
-              if (update.kind === 'stop') break;
-              if (update.update.sessionUpdate === 'agent_message_chunk' && update.update.content.type === 'text') {
-                live.pushText(update.update.content.text);
-              }
-            }
-
-            if (live.hasVisibleText) {
-              settleMessage();
-            } else {
-              // An empty turn is a failure, not a success: Claude Code
-              // resolves its pending prompt when its own process dies
-              // mid-turn, and calling that `completed` would draw an empty
-              // answer in the chat as if it had worked. `EMPTY_RESPONSE` is
-              // the code the default engine already uses for this case, and
-              // its retry policy already treats it as safe to repeat.
-              settleAttempt();
-              turnEnds = {
-                kind: 'error',
-                error: {
-                  message: 'the ACP agent ended the turn without producing any text',
-                  code: EMPTY_RESPONSE_CODE,
-                },
-              };
-            }
-          } catch (error) {
-            // An attempt that never publishes its terminal frame leaves the
-            // GUI holding an open live stream forever, so every failure has
-            // to close it here.
-            if (live.hasVisibleText) settleAttempt();
-            else live.abandon();
-            turnEnds = {
-              kind: 'error',
-              error:
-                error instanceof LlmError ? error.failure : { message: errorChain(error), code: 'UNKNOWN' },
-            };
-          } finally {
-            session.append('step/end', { turn, step });
-            session.append('turn/end', { turn, reason: turnEnds });
-            agent.markIdle();
-            dispatch.emit('agent/status', { status: 'idle' });
-          }
-        }
+        // The scheduler owns the turn/step skeleton, the inbox boundary, the
+        // cancel/timeout closers and the steering injection; see bridge-loop.ts.
+        await runBridgeLoop({
+          session,
+          agent,
+          dispatch,
+          acp: live,
+          attempts,
+          signal,
+          idleTimeoutMs: this.config.promptIdleTimeoutMs ?? DEFAULT_PROMPT_IDLE_TIMEOUT_MS,
+          cancelGraceMs: CANCEL_GRACE_MS,
+        });
       });
     });
   }

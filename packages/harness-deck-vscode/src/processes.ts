@@ -8,9 +8,17 @@
  * remember the process so it can be stopped later.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { connect } from 'node:net';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import {
+  assertWritableDir,
+  findPortOwner,
+  portListening,
+  processAlive,
+  readPid,
+  stopProcess,
+  type StopOutcome,
+} from './shared/process';
 import {
   credentialEnv,
   envFilePath,
@@ -25,6 +33,14 @@ import {
 /** How long `start` waits for the GUI port before giving up. */
 const READY_TIMEOUT_MS = 60_000;
 
+/** What a `stopAll` managed to take down, and what it had to leave behind. */
+export interface StopAllResult {
+  /** Harnesses that are down now. */
+  stopped: string[];
+  /** Harnesses that were up and are still up — the harness had to be reported. */
+  survivors: string[];
+}
+
 /** Runtime state of one harness. */
 export interface HarnessState {
   entry: HarnessEntry;
@@ -34,6 +50,11 @@ export interface HarnessState {
   listening: boolean;
   /** pid of the managed process, when there is one. */
   pid?: number;
+  /**
+   * Pid actually listening on the port when the pid file does not explain it.
+   * Its presence is the "orphan" signal shown in the tree.
+   */
+  portOwner?: { pid: number; via: string };
   /** Web GUI URL with the session token, once the process printed it. */
   url: string;
   /** Loopback proxy URL of the GUI, when the panel can be embedded in the tab. */
@@ -52,33 +73,17 @@ export interface HarnessEvents {
   onExit?(harness: HarnessEntry, code: number | null): void;
 }
 
-/** True when `pid` names a live process. */
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-/** True when something accepts a TCP connection on the port. */
-export function portListening(port: number, timeoutMs = 800): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connect({ port, host: '127.0.0.1' });
-    let settled = false;
-    const finish = (value: boolean): void => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(value);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => finish(true));
-    socket.once('timeout', () => finish(false));
-    socket.once('error', () => finish(false));
-  });
-}
+export {
+  assertWritableDir,
+  findPortOwner,
+  killTree,
+  portListening,
+  processAlive,
+  readPid,
+  stopProcess,
+  waitForStopped,
+  type StopOutcome,
+} from './shared/process';
 
 /** Extract the tokenized GUI URL the DSH prints on startup. */
 export function extractGuiUrl(chunk: string, port: number): string | undefined {
@@ -161,7 +166,7 @@ export class HarnessProcesses {
   /** Inspect one harness without changing anything. */
   async inspect(entry: HarnessEntry): Promise<HarnessState> {
     const child = this.children.get(entry.name);
-    const pid = child?.pid ?? readPidFile(harnessPidPath(this.deckHome, entry));
+    const pid = child?.pid ?? (await readPid(harnessPidPath(this.deckHome, entry)));
     const alive = pid !== undefined && processAlive(pid);
     const listening = await portListening(entry.port);
     // The log is appended by the process itself, so its newest token is never
@@ -172,11 +177,16 @@ export class HarnessProcesses {
       this.urls.set(entry.name, recovered);
     }
     const url = this.url(entry);
+    // A listener the pid file does not explain is an orphan, not a managed
+    // harness: the tree view says so instead of showing a green dot for a
+    // process this window cannot stop.
+    const portOwner = listening && !alive ? await findPortOwner(entry.port) : undefined;
     return {
       entry,
       managed: this.startedByUs.has(entry.name) && alive,
       listening,
       ...(pid !== undefined && alive ? { pid } : {}),
+      ...(portOwner !== undefined && portOwner.pid !== pid ? { portOwner } : {}),
       url,
       tail: this.tail(entry),
     };
@@ -191,6 +201,11 @@ export class HarnessProcesses {
   async start(entry: HarnessEntry, options: { wait?: boolean } = {}): Promise<HarnessState> {
     if (await portListening(entry.port)) return this.inspect(entry);
 
+    // A read-only deck home cannot hold a pid file or a log, and the failure
+    // would otherwise appear deep inside the boot as an EROFS on an unrelated
+    // path. Name the problem before anything is spawned.
+    await assertWritableDir(this.deckHome, 'a raiz do deck');
+    await assertWritableDir(harnessHome(this.deckHome, entry), `a DSH_HOME do harness "${entry.name}"`);
     const logPath = harnessLogPath(this.deckHome, entry);
     mkdirSync(dirname(logPath), { recursive: true });
     const log = createWriteStream(logPath, { flags: 'a' });
@@ -199,6 +214,11 @@ export class HarnessProcesses {
       `[vscode] starting ${this.dshCommand} --profile ${entry.profile} --port ${entry.port} --no-open\n`,
     );
 
+    // `detached` is what makes the stop path work: the harness becomes the
+    // leader of its own process group, so `killTree` reaches the CLI and tool
+    // subprocesses it spawns, not just the parent. It also survives the window
+    // reload that recreates the extension host, which is why `deactivate` has to
+    // kill it explicitly.
     const child = spawn(
       this.dshCommand,
       ['--profile', entry.profile, '--port', String(entry.port), '--no-open'],
@@ -210,9 +230,11 @@ export class HarnessProcesses {
           ...providerEnv(entry, this.envFile),
           DSH_HOME: harnessHome(this.deckHome, entry),
         },
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
+    child.unref();
 
     this.children.set(entry.name, child);
     this.startedByUs.set(entry.name, entry);
@@ -263,25 +285,79 @@ export class HarnessProcesses {
     return portListening(entry.port);
   }
 
-  /** Stop a harness this extension started. */
-  async stop(entry: HarnessEntry, timeoutMs = 8000): Promise<boolean> {
-    const child = this.children.get(entry.name);
-    if (child === undefined || child.pid === undefined) return false;
-    child.kill('SIGTERM');
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline && processAlive(child.pid)) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+  /**
+   * Stop a harness.
+   *
+   * The decision is not taken here: {@link stopProcess} is the same module the
+   * CLI uses, so the panel cannot believe a harness is down while the port is
+   * still answered. It also means the panel stops a harness it did **not**
+   * start (started by the CLI, or by a previous window) instead of reporting
+   * "nothing to stop" and forgetting it.
+   *
+   * @param entry - the harness to stop.
+   * @param timeoutMs - how long SIGTERM gets before SIGKILL.
+   */
+  async stop(entry: HarnessEntry, timeoutMs = 8000): Promise<StopOutcome> {
+    const outcome = await stopProcess({
+      port: entry.port,
+      pidPath: harnessPidPath(this.deckHome, entry),
+      timeoutMs,
+    });
+    // Only forget the harness once it is really gone: a survivor keeps its entry
+    // so the next attempt still knows about it.
+    if (outcome.stopped) {
+      this.children.delete(entry.name);
+      this.startedByUs.delete(entry.name);
+      this.urls.delete(entry.name);
     }
-    if (processAlive(child.pid)) child.kill('SIGKILL');
-    this.children.delete(entry.name);
-    this.startedByUs.delete(entry.name);
-    rmSync(harnessPidPath(this.deckHome, entry), { force: true });
-    return true;
+    return outcome;
   }
 
-  /** Stop every harness this extension started (used on deactivate). */
-  async stopAll(): Promise<void> {
-    for (const entry of this.managedEntries()) await this.stop(entry);
+  /**
+   * Stop every harness this window started, inside one time budget.
+   *
+   * `deactivate` is the last chance to clean up: VS Code does not wait
+   * indefinitely for it, and a `stopAll` that overruns leaves the harness alive.
+   * The budget is therefore shared, and what did not fit is reported instead of
+   * silently dropped.
+   *
+   * @param budgetMs - total time this may take before giving up.
+   * @returns the outcome per harness and the entries that did not finish.
+   */
+  async stopAll(budgetMs = 10_000, registered: readonly HarnessEntry[] = []): Promise<StopAllResult> {
+    const deadline = Date.now() + budgetMs;
+    const stopped: string[] = [];
+    const survivors: string[] = [];
+    // `startedByUs` only knows what THIS window started. Closing the window after
+    // a reload, a reinstall or a second window would leave the harness of the
+    // former window running, which is the orphan the tree view already flags.
+    // The registry tells us which ports belong to the deck; a listener on one of
+    // them is ours to stop, whoever started it.
+    const candidates = new Map<string, HarnessEntry>();
+    for (const entry of registered) candidates.set(entry.name, entry);
+    for (const entry of this.managedEntries()) candidates.set(entry.name, entry);
+    for (const entry of candidates.values()) {
+      const left = deadline - Date.now();
+      if (left <= 0) {
+        survivors.push(entry.name);
+        continue;
+      }
+      const outcome = await this.stop(entry, Math.min(left, 8000));
+      // A harness that was already down is a no-op, not a failure: calling it a
+      // survivor would put a warning on screen for a window that closed clean.
+      // The pid file counts as up even with the port closed — a harness still
+      // starting has the file and no listener yet.
+      const pidFile = await readPid(harnessPidPath(this.deckHome, entry));
+      const alive =
+        outcome.stopped ||
+        outcome.signal !== 'none' ||
+        (await portListening(entry.port)) ||
+        (pidFile !== undefined && processAlive(pidFile));
+      if (!alive) continue;
+      if (outcome.stopped) stopped.push(entry.name);
+      else survivors.push(entry.name);
+    }
+    return { stopped, survivors };
   }
 
   /** Keep the last 40 lines of output for tooltips and error messages. */
@@ -289,16 +365,6 @@ export class HarnessProcesses {
     const combined = `${this.tails.get(name) ?? ''}${text}`;
     const lines = combined.split('\n');
     this.tails.set(name, lines.slice(-40).join('\n'));
-  }
-}
-
-/** Read a pid file, or undefined when it is absent or unparsable. */
-function readPidFile(path: string): number | undefined {
-  try {
-    const pid = Number.parseInt(readFileSync(path, 'utf8').trim(), 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
-  } catch {
-    return undefined;
   }
 }
 
