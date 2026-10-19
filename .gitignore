@@ -17,3 +17,4 @@ dist/
 
 # Plugin build output: produced by `npm run build` in the package
 lib/
+dist-test/

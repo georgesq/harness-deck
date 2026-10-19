@@ -74,6 +74,10 @@ function defaultPluginPath(): string {
   return resolve(repoRootFromThisFile(), 'packages', 'harness-deck-claude-code');
 }
 
+function defaultGeminiPluginPath(): string {
+  return resolve(repoRootFromThisFile(), 'packages', 'harness-deck-gemini');
+}
+
 /** Parsed command line. */
 interface Options {
   command: string;
@@ -138,7 +142,7 @@ const HELP = `harness-deck — registro e lançador de harness
 
 Uso:
   harness-deck list [--json]
-  harness-deck add <nome> [--engine dsh|claude-code] [--port <porta>]
+  harness-deck add <nome> [--engine dsh|claude-code|gemini] [--port <porta>]
                           [--provider <rota>] [--model <id>]... [--api <protocolo>]
                           [--key-env <VAR>] [--base-url <url>] [--note <texto>]
                           [--dsh-home <dir>] [--force]
@@ -322,8 +326,8 @@ async function commandAdd(home: string, options: Options): Promise<void> {
     fail(`nome inválido "${name}": use minúsculas, dígitos e hífen (o nome vira o perfil do DSH)`);
   }
   const engine = (flag(options, 'engine') ?? DEFAULT_ENGINE) as HarnessEngine;
-  if (engine !== 'dsh' && engine !== 'claude-code') {
-    fail(`--engine aceita "dsh" ou "claude-code", não "${engine}"`);
+  if (engine !== 'dsh' && engine !== 'claude-code' && engine !== 'gemini') {
+    fail(`--engine aceita "dsh", "claude-code" ou "gemini", não "${engine}"`);
   }
   const registry = await loadRegistry(home);
   const previous = findHarness(registry, name);
@@ -371,10 +375,14 @@ async function commandAdd(home: string, options: Options): Promise<void> {
   // Validate before anything is written. `saveRegistry` only serializes, so
   // without this a route that cannot boot (an unknown one with no endpoint)
   // would be persisted and only fail much later, inside the harness.
-  normalizeProvider(entry.provider, `harness "${name}"`);
-
-  const pluginPath = resolve(flag(options, 'plugin') ?? defaultPluginPath());
-  const materialized = await materializeProfile(home, entry, { pluginPath });
+  const pluginPath = resolve(
+    flag(options, 'plugin') ??
+      (entry.engine === 'gemini' ? defaultGeminiPluginPath() : defaultPluginPath()),
+  );
+  const materialized = await materializeProfile(home, entry, {
+    pluginPath,
+    geminiPluginPath: defaultGeminiPluginPath(),
+  });
   const path = await saveRegistry(upsertHarness(registry, entry));
   await writeEnvExample(home, entry);
 
@@ -441,7 +449,10 @@ async function commandUp(home: string, options: Options): Promise<void> {
         `aviso: ${keyEnv} não está no ambiente nem em ${envFilePath(home)} — o harness "${entry.name}" sobe, mas o modelo vai falhar\n`,
       );
     }
-    const result = await startHarness(home, entry, { pluginPath });
+    const result = await startHarness(home, entry, {
+      pluginPath,
+      geminiPluginPath: defaultGeminiPluginPath(),
+    });
     if (result.alreadyRunning) {
       process.stdout.write(`${entry.name}: já estava no ar (pid ${String(result.state.pid)})\n`);
       continue;

@@ -111,6 +111,8 @@ export async function inspectAll(home: string, registry: Registry): Promise<Harn
 export interface StartOptions {
   /** Path of the `harness-deck-claude-code` package, for the `claude-code` engine. */
   pluginPath: string;
+  /** Path of the `harness-deck-gemini` package, for the `gemini` engine. */
+  geminiPluginPath?: string;
   /** Extra environment for the child process, on top of `process.env` and the deck `.env`. */
   env?: NodeJS.ProcessEnv;
   /** Skip materializing the profile first (used by tests). */
@@ -146,7 +148,10 @@ export async function startHarness(home: string, entry: HarnessEntry, options: S
 
   let materialized: MaterializeResult | undefined;
   if (!options.skipMaterialize) {
-    materialized = await materializeProfile(home, entry, { pluginPath: options.pluginPath });
+    materialized = await materializeProfile(home, entry, {
+      pluginPath: options.pluginPath,
+      geminiPluginPath: options.geminiPluginPath,
+    });
   }
 
   if (await portListening(entry.port)) {

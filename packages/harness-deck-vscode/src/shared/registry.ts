@@ -39,7 +39,7 @@ export const ENV_FILE = '.env';
 export const REGISTRY_VERSION = 1;
 
 /** Engine that runs a harness' agent. */
-export type HarnessEngine = 'dsh' | 'claude-code';
+export type HarnessEngine = 'dsh' | 'claude-code' | 'gemini';
 
 /**
  * Provider route a harness uses.
@@ -241,6 +241,26 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
     env.ANTHROPIC_BASE_URL = entry.providerBaseUrl;
     return env;
   }
+  if (entry.engine === 'gemini' && entry.provider) {
+    const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
+    const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
+    if (baseUrl) {
+      env.GEMINI_BASE_URL = baseUrl;
+      env.GOOGLE_BASE_URL = baseUrl;
+      env.GOOGLE_GEMINI_BASE_URL = baseUrl;
+    }
+    if (key) {
+      env.GEMINI_API_KEY = key;
+      env.GOOGLE_API_KEY = key;
+    }
+    if (entry.provider.model) {
+      env.GEMINI_MODEL = entry.provider.model;
+      env.HARNESS_DECK_MODEL_MAP = JSON.stringify(modelMap(entry.provider));
+      env.HARNESS_DECK_UPSTREAM_URL = baseUrl;
+      if (key) env.HARNESS_DECK_UPSTREAM_KEY = key;
+    }
+    return env;
+  }
   if (entry.engine !== 'claude-code' || !entry.provider) return env;
   const key = process.env[entry.provider.apiKeyEnv] ?? fromFile[entry.provider.apiKeyEnv];
   const baseUrl = entry.provider.baseUrl ?? PROVIDER_BASE_URLS[entry.provider.kind];
@@ -267,6 +287,7 @@ export function providerEnv(entry: HarnessEntry, fromFile: Record<string, string
 export const DEFAULT_KEY_ENV: Record<HarnessEngine, string> = {
   dsh: 'DEEPSEEK_API_KEY',
   'claude-code': 'ANTHROPIC_API_KEY',
+  gemini: 'GEMINI_API_KEY',
 };
 
 /**
@@ -489,8 +510,8 @@ export function normalizeRegistry(parsed: unknown, home: string, path = registry
     if (seen.has(name)) throw new RegistryError(`${where}: duplicate harness name "${name}"`);
     seen.add(name);
     const engine = candidate.engine ?? 'dsh';
-    if (engine !== 'dsh' && engine !== 'claude-code') {
-      throw new RegistryError(`${where}: "engine" must be "dsh" or "claude-code", got "${String(engine)}"`);
+    if (engine !== 'dsh' && engine !== 'claude-code' && engine !== 'gemini') {
+      throw new RegistryError(`${where}: "engine" must be "dsh", "claude-code", or "gemini", got "${String(engine)}"`);
     }
     const port = candidate.port;
     if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {

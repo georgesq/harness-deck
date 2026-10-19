@@ -7,6 +7,15 @@
 
 ## Agora
 
+- [x] **Harness do Gemini implementado e validado (19/10/2026 — Fase F5 / Itens 5.1 e 5.2).**
+  Criado o pacote `packages/harness-deck-gemini` conectando como cliente ACP via `@agentclientprotocol/sdk`
+  ao Gemini CLI (`gemini --acp`). Incorpora os 3 aprendizados fixados: cancelamento real via `session/cancel`
+  com liberação do status para `idle`, streaming com frames densos contínuos e exibição de atividade de
+  ferramentas/subagentes na GUI do DSH. Suporte completo a modelos arbitrários via `model-proxy` (OpenRouter,
+  gateway ou rota direta Google). O `harness-deck-launcher` e a extensão do VS Code foram atualizados para
+  reconhecer `engine: 'gemini'`, materializar o patch `cordis.patch.yml` e gerenciar o ciclo de vida.
+  Suíte de testes automatizados com 26 verificações (19 no bridge e 7 no launcher) 100% aprovada.
+  Acompanhamento detalhado em [`docs/cronogramas/cronograma-feat-gemini-harness.md`](cronogramas/cronograma-feat-gemini-harness.md).
 - [x] **Versão 1.0 fechada e estável (confirmado pelo dono em 19/10/2026).** O harness Claude Code (`claude`, via `harness-deck-claude-code` e ponte ACP) está estável, testado e em funcionamento pleno integrado ao DSH e à extensão do VS Code. Os portões **F1** (conversa com Claude Code, streaming denso, aprovação de ferramentas e retomada) e **F2** (múltiplos harnesses simultâneos na mesma janela do VS Code, isolamento estrito de workspaces por `DSH_HOME`) estão homologados e fechados.
 - [x] **Item B.4 — completo: a ferramenta pede permissão e roda (ou é recusada).** O bridge não
   registrava handler para `session/request_permission`, que é método do **cliente** ACP: a conexão
@@ -357,6 +366,20 @@ Oito erros que só apareceram **rodando** o caminho ponta a ponta, nenhum deles 
    sem nome de serviço nem causa. Corrigido com `onRequest(...requestPermission, ...)` roteando para
    o serviço `approval` do DSH. Lição, irmã da do item 4: **substituir o motor não é só reanexar os
    eventos que ele emite — é também responder às perguntas que ele respondia.**
+9. **O botão de STOP não cancela se for apenas cancelamento de RPC (aprendizado fixado para novos harnesses).**
+   O sinal de cancelamento padrão do cliente JSON-RPC (`$/cancel_request`) encerra apenas a requisição
+   imediata, mas deixa o processo do agente rodando solto. Para parar de verdade, o bridge precisa
+   enviar a notificação `session/cancel` com o `sessionId` no ACP, acoplado ao turno em voo
+   (`attachTurn({ requestCancel })`) e com tratamento do `cancelCause` no scheduler. O status do
+   agente só vai para `idle` quando o ACP confirma a parada, evitando sobreposição de turnos.
+10. **A GUI só mostra que está trabalhando se o ciclo de frames for denso e estrito (aprendizado fixado).**
+    A imagem/animação de "trabalhando" e a habilitação do botão de STOP dependem de `agent.status = 'running'`,
+    da emissão de `turn/start` e `step/start`, e de frames contínuos em `agent/assistant-stream` com
+    `revision` sequencial sem saltos. Qualquer quebra nessa cadeia faz a interface parecer travada.
+11. **Subagentes trabalhando precisam de tradução explícita de eventos (aprendizado fixado).**
+    Quando o motor delega tarefas a subagentes ou subprocessos, essa atividade deve ser traduzida para os
+    eventos de subagente/tarefas do DSH (`agent/subagent-*`). Caso contrário, a UI fica em silêncio e o
+    usuário não tem visibilidade de que há especialistas operando em segundo plano.
 
 ## Defeito do merge do perfil, encontrado rodando (12/10/2026)
 

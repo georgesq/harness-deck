@@ -17,16 +17,27 @@
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { harnessProfileDir, providerApi, providerModels, PROVIDER_BASE_URLS, type HarnessEntry } from './registry.ts';
+import {
+  harnessProfileDir,
+  providerApi,
+  providerModels,
+  PROVIDER_BASE_URLS,
+  type HarnessEngine,
+  type HarnessEntry,
+} from './registry.ts';
 /** Bundles every harness-deck web profile loads. */
 export const WEB_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] as const;
 
-/** The engine plugin package name. */
+/** The engine plugin package name for Claude Code. */
 export const CLAUDE_CODE_PLUGIN = 'harness-deck-claude-code';
 
+/** The engine plugin package name for Gemini. */
+export const GEMINI_PLUGIN = 'harness-deck-gemini';
+
 /** Where the plugin package lives inside the repository. */
-export function defaultPluginPath(repoRoot: string): string {
-  return join(repoRoot, 'packages', CLAUDE_CODE_PLUGIN);
+export function defaultPluginPath(repoRoot: string, engine: HarnessEngine = 'claude-code'): string {
+  const pluginName = engine === 'gemini' ? GEMINI_PLUGIN : CLAUDE_CODE_PLUGIN;
+  return join(repoRoot, 'packages', pluginName);
 }
 
 /** Thrown when a profile cannot be materialized. */
@@ -326,16 +337,19 @@ export function profilePatchYml(entry: HarnessEntry): string {
     '#',
   ];
   const head = lines.length;
-  if (entry.engine === 'claude-code') {
+  if (entry.engine === 'claude-code' || entry.engine === 'gemini') {
+    const isGemini = entry.engine === 'gemini';
+    const pluginName = isGemini ? GEMINI_PLUGIN : CLAUDE_CODE_PLUGIN;
+    const engineTitle = isGemini ? 'Gemini' : 'Claude Code';
     lines.push(
-      '# One AgentFactory per DSH process: the Claude Code engine disables the',
+      `# One AgentFactory per DSH process: the ${engineTitle} engine disables the`,
       '# default loop and inserts the ACP bridge here.',
       '- id: agent-loop',
       '  disabled: true',
       '',
       '- insert:',
-      `    - id: ${CLAUDE_CODE_PLUGIN}`,
-      `      name: ${CLAUDE_CODE_PLUGIN}`,
+      `    - id: ${pluginName}`,
+      `      name: ${pluginName}`,
       '',
     );
   }
@@ -410,7 +424,7 @@ export async function pathExists(path: string): Promise<boolean> {
 export async function materializeProfile(
   home: string,
   entry: HarnessEntry,
-  options: { pluginPath: string },
+  options: { pluginPath: string; geminiPluginPath?: string },
 ): Promise<MaterializeResult> {
   const dir = profileDir(home, entry);
   const written: string[] = [];
@@ -438,20 +452,22 @@ export async function materializeProfile(
     written.push(workspacePath);
   }
 
-  if (entry.engine === 'claude-code') {
-    const plugin = resolve(options.pluginPath);
+  if (entry.engine === 'claude-code' || entry.engine === 'gemini') {
+    const isGemini = entry.engine === 'gemini';
+    const pluginName = isGemini ? GEMINI_PLUGIN : CLAUDE_CODE_PLUGIN;
+    const plugin = resolve(isGemini && options.geminiPluginPath ? options.geminiPluginPath : options.pluginPath);
     const manifest = join(plugin, 'package.json');
     if (!(await pathExists(manifest))) {
       throw new MaterializeError(
-        `engine "claude-code" needs the plugin at ${plugin}, but ${manifest} is missing. ` +
-          `Pass --plugin <path-to-packages/harness-deck-claude-code>.`,
+        `engine "${entry.engine}" needs the plugin at ${plugin}, but ${manifest} is missing. ` +
+          `Pass --plugin <path-to-packages/${pluginName}>.`,
       );
     }
     const built = join(plugin, 'lib', 'index.js');
     if (!(await pathExists(built))) {
       throw new MaterializeError(`${manifest} found, but ${built} is missing: run \`pnpm build\` in the plugin first.`);
     }
-    const link = join(dir, 'node_modules', CLAUDE_CODE_PLUGIN);
+    const link = join(dir, 'node_modules', pluginName);
     await mkdir(join(dir, 'node_modules'), { recursive: true });
     await rm(link, { recursive: true, force: true });
     await symlink(plugin, link, 'dir');

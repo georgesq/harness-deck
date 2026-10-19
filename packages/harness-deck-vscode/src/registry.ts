@@ -40,7 +40,7 @@ function isHarnessEntry(value: unknown): value is HarnessEntry {
     typeof candidate.name === 'string' &&
     candidate.name !== '' &&
     typeof candidate.port === 'number' &&
-    (candidate.engine === 'dsh' || candidate.engine === 'claude-code')
+    (candidate.engine === 'dsh' || candidate.engine === 'claude-code' || candidate.engine === 'gemini')
   );
 }
 
