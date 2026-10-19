@@ -24,7 +24,7 @@ import {
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
 import type { AgentCancelCause, Session, SessionSeq } from '@deepseek-ai/dsh-session';
-import type { ApprovalOutcome } from '@deepseek-ai/dsh-user-approval';
+import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval';
 import {
   AssistantStreamAccumulator,
   BlockAssembler,
@@ -352,7 +352,7 @@ class LiveAssistantAttempt {
 }
 
 export class GeminiAgentLoop extends Service implements AgentFactory {
-  static inject = ['agents', 'sessions', 'approval'];
+  static inject = ['agents', 'sessions', 'approval', 'sandboxPolicy'];
 
   private readonly config: GeminiAgentLoopConfig;
   private readonly runtime: { ctx: Context };
@@ -456,6 +456,7 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
       );
       return { outcome: { outcome: 'cancelled' } };
     }
+    if (this.isFullAccess(agent, approval)) return this.allowOnce(request);
     let outcome: ApprovalOutcome;
     try {
       outcome = await approval.request({
@@ -468,6 +469,26 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
       return { outcome: { outcome: 'cancelled' } };
     }
     if (outcome !== 'allowed-once') return { outcome: { outcome: 'cancelled' } };
+    return this.allowOnce(request);
+  }
+
+  // `danger-full-access` preset = sandbox off + approval policy `never`; the
+  // approval service rejects every ask under `never`, so asking would block all.
+  private isFullAccess(agent: GeminiAgent, approval: ApprovalService): boolean {
+    try {
+      const policy = approval.overrideOf(agent.session) ?? approval.config.policy;
+      if (policy !== 'never') return false;
+      const sandbox = (this.runtime.ctx as unknown as {
+        sandboxPolicy?: { resolve(req: { session: unknown }): { mode: string } };
+      }).sandboxPolicy;
+      return sandbox?.resolve({ session: agent.session }).mode === 'danger-full-access';
+    } catch (error) {
+      process.stderr.write(`[gemini] could not read permission policy: ${errorChain(error)}\n`);
+      return false;
+    }
+  }
+
+  private allowOnce(request: acp.RequestPermissionRequest): acp.RequestPermissionResponse {
     const allow = request.options.find((option) => option.kind === 'allow_once') ?? request.options[0];
     if (allow === undefined) return { outcome: { outcome: 'cancelled' } };
     return { outcome: { outcome: 'selected', optionId: allow.optionId } };
