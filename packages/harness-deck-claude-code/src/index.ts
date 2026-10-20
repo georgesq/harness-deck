@@ -49,7 +49,9 @@ import {
   type InboxTarget,
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
+import { SessionLogOffset, interruptedTurnClosers } from '@deepseek-ai/dsh-session';
 import type { AgentCancelCause, Session, SessionSeq } from '@deepseek-ai/dsh-session';
+import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence';
 import type { ToolCallId } from '@deepseek-ai/dsh-llm/brand';
 import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval';
 import {
@@ -565,6 +567,12 @@ class LiveAssistantAttempt {
   }
 }
 
+/** A session's owned durable-log handle and how many events it already holds. */
+interface StoredSession {
+  readonly handle: SessionHandle;
+  storedCount: number;
+}
+
 /**
  * Concrete `AgentFactory` for the Claude Code engine.
  *
@@ -626,13 +634,83 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     const session = sessions.prepare(options.sessionId, {
       ...(options.seed === undefined ? {} : { seed: options.seed }),
       ...(options.meta === undefined ? {} : { meta: options.meta }),
+      ...(options.inheritedEventCount === undefined ? {} : { inheritedEventCount: options.inheritedEventCount }),
     });
 
-    const detachSession = sessions.enter(session);
+    const stored = await this.createStoredSession(session);
+    return this.launch(ownerCtx, session, stored, options.agentOptions ?? {}, options.setup);
+  }
+
+  /**
+   * Take write ownership of a fresh session's durable log, when a persistence
+   * backend is mounted.
+   *
+   * Without this nothing reaches `DSH_HOME/sessions`: the JSONL backend only
+   * routes a session's `session/event`s into a handle somebody opened for it,
+   * and `dsh-agent-loop` is who opens it in the default engine. A bridge that
+   * skips it keeps the session in memory and in the projection cache only, so
+   * the session list is empty after a restart.
+   *
+   * @param session - the prepared, not yet entered session.
+   * @returns the owned handle and stored cursor, or `undefined` without a backend.
+   */
+  private async createStoredSession(session: Session): Promise<StoredSession | undefined> {
+    const persistence = this.runtime.ctx.get('sessionPersistence');
+    if (persistence === undefined) {
+      process.stderr.write('[claude-code] no session persistence backend; the session will not survive a restart\n');
+      return undefined;
+    }
+    const handle = await persistence.create(session.header, {
+      inheritedEventCount: session.inheritedEventCount,
+    });
+    return { handle, storedCount: 0 };
+  }
+
+  /**
+   * Store the events already in the session log that were appended before it
+   * entered the store (the constructor seed). Those never re-emit through
+   * `session/event`, so the live routing would miss them. Must run before
+   * `sessions.enter`, otherwise the same events would be written twice.
+   */
+  private async appendUnstoredSuffix(stored: StoredSession | undefined, session: Session): Promise<void> {
+    if (stored === undefined) return;
+    const suffix = session.snapshotEvents(SessionLogOffset(stored.storedCount));
+    if (suffix.length > 0) await stored.handle.append(suffix);
+    stored.storedCount += suffix.length;
+  }
+
+  /**
+   * Build, register and start one agent around a prepared session. Shared by
+   * {@link createAgent} and {@link resume}; owns `stored` from here on and
+   * closes it on every failure path and in the returned `dispose`.
+   */
+  private async launch(
+    ownerCtx: Context,
+    session: Session,
+    stored: StoredSession | undefined,
+    agentOptions: AgentOptions,
+    setup: CreateAgentOptions['setup'],
+  ): Promise<AgentHandle> {
+    const sessions = this.runtime.ctx.sessions;
+    const closeStored = async (): Promise<void> => {
+      await stored?.handle.close().catch((error: unknown) => {
+        ownerCtx.logger.warn(`claudeCodeAgentLoop: closing the log of session "${session.id}" failed: ${String(error)}`);
+      });
+    };
+
+    let detachSession: () => void;
+    try {
+      await this.appendUnstoredSuffix(stored, session);
+      detachSession = sessions.enter(session);
+    } catch (error) {
+      await closeStored();
+      throw error;
+    }
     try {
       sessions.announce(session);
     } catch (error) {
       detachSession();
+      await closeStored();
       throw error;
     }
 
@@ -648,11 +726,12 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     const loopCtx = this.runtime.ctx;
     let startedAgent: ClaudeCodeAgent | undefined;
     ownerCtx.effect(function* () {
-      startedAgent = new ClaudeCodeAgent(loopCtx, session, options.agentOptions ?? {});
+      startedAgent = new ClaudeCodeAgent(loopCtx, session, agentOptions);
       yield startedAgent.scope.rawDispose;
-    }, `claudeCodeAgentLoop.lifecycle(${options.sessionId})`);
+    }, `claudeCodeAgentLoop.lifecycle(${session.id})`);
     if (startedAgent === undefined) {
       detachSession();
+      await closeStored();
       throw new Error('claudeCodeAgentLoop: the Agent did not start');
     }
     // Bound once: TypeScript cannot see through the closure above.
@@ -664,13 +743,14 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     // commit (if any) immediately before publication. A throw here rolls
     // the whole creation back instead of leaking a half-set-up agent.
     let setupCommit: { commit(): void } | undefined;
-    if (options.setup !== undefined) {
+    if (setup !== undefined) {
       try {
-        const result = await options.setup(agentScope.ctx, agent);
+        const result = await setup(agentScope.ctx, agent);
         if (result !== undefined) setupCommit = result;
       } catch (error) {
         detachSession();
         await agentScope.dispose();
+        await closeStored();
         throw error;
       }
     }
@@ -679,12 +759,13 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
     } catch (error) {
       detachSession();
       await agentScope.dispose();
+      await closeStored();
       throw error;
     }
 
     const detachAgent = await this.runtime.ctx.agents.register(agent);
 
-    const cwd = options.meta?.cwd ?? process.cwd();
+    const cwd = session.header.cwd ?? process.cwd();
     const binPath = await resolveAcpBinPath(this.config.acpBinPath);
     const child = spawnAcpAgent(binPath, cwd, await acpChildEnv());
     const bridgeAbort = new AbortController();
@@ -707,6 +788,9 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
         await bridgeDone;
         await detachAgent?.();
         detachSession();
+        // `session/disposed` already starts the final drain; closing here makes
+        // dispose wait for it, so a restart right after never loses the tail.
+        await closeStored();
         await agentScope.dispose();
       },
     };
@@ -908,13 +992,41 @@ export class ClaudeCodeAgentLoop extends Service implements AgentFactory {
 
   /**
    * @inheritdoc
-   * TODO(B.5): reload the persisted session, reconnect (or replay) the ACP
-   * session, and reconcile it with whatever `~/.claude/projects` holds for
-   * the same session (see docs/plano.md item 3.2 for the longer-term
-   * dual-log concern).
+   *
+   * Reloads the session from the persistence backend (the same sequence as
+   * `dsh-agent-loop`'s `resumeWith`): opens the write handle, reads the log,
+   * closes a turn the previous process left open, and rebuilds the session
+   * from that seed. The DSH side is fully restored — history, title, goal.
+   *
+   * The ACP side starts a NEW Claude Code session in the same `cwd`: the DSH
+   * log does not record the CLI's own session id, so the model does not
+   * remember the earlier turns (docs/plano.md item 3.2, dual-log concern).
    */
-  async resume(_ownerCtx: Context, _options: ResumeAgentOptions): Promise<AgentHandle> {
-    throw new Error('not implemented yet — item B.5');
+  async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle> {
+    const persistence = this.runtime.ctx.get('sessionPersistence');
+    if (persistence === undefined) {
+      throw new Error('cannot resume: session persistence is not configured (load a dsh-session-persistence backend)');
+    }
+    const id = options.resumeSessionId;
+    const handle = await persistence.open(id, 'write', options.signal === undefined ? {} : { signal: options.signal });
+    let session: Session;
+    let stored: StoredSession;
+    try {
+      const cold = await handle.read(0, undefined, options.signal === undefined ? {} : { signal: options.signal });
+      const closers = interruptedTurnClosers(cold.events);
+      if (closers.length > 0) await handle.append(closers);
+      session = this.runtime.ctx.sessions.prepare(id, {
+        seed: [...cold.events, ...closers],
+        meta: structuredClone(handle.header),
+        inheritedEventCount: handle.inheritedEventCount,
+        eventState: cold.eventState,
+      });
+      stored = { handle, storedCount: cold.events.length + closers.length };
+    } catch (error) {
+      await handle.close().catch(() => {});
+      throw error;
+    }
+    return this.launch(ownerCtx, session, stored, options.agentOptions ?? {}, options.setup);
   }
 }
 
