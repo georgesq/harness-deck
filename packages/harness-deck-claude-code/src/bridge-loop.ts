@@ -207,6 +207,7 @@ export type SteeringOutcome = 'injected' | 'idle' | 'unsupported';
 export type LoopAcpUpdate =
   | { readonly kind: 'stop'; readonly stopReason: string }
   | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'tool' }
   | { readonly kind: 'other' };
 
 /** Live ACP session, narrowed to what the scheduler needs. */
@@ -426,6 +427,7 @@ async function runStep(params: {
       process.stderr.write(`[claude-code] ACP prompt rejected: ${String(error)}\n`);
     });
 
+    let toolSinceText = false;
     for (;;) {
       // The read is kept in a variable: it owns the session's next update, and
       // abandoning it would let it steal the first update of the next step.
@@ -452,7 +454,13 @@ async function runStep(params: {
         stopReason = update.stopReason;
         break;
       }
-      if (update.kind === 'text') live.pushText(update.text);
+      if (update.kind === 'tool') toolSinceText = true;
+      if (update.kind === 'text') {
+        // The single text block has no structure of its own: without a break,
+        // the prose before and after a tool call is glued into one paragraph.
+        live.pushText(toolSinceText && live.hasVisibleText ? `\n\n${update.text}` : update.text);
+        toolSinceText = false;
+      }
     }
 
     if (disposed) {

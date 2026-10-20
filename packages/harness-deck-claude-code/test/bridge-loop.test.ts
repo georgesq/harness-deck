@@ -78,6 +78,7 @@ function fakeAttempts(log: string[]) {
       },
       pushText: (chunk: string) => {
         text += chunk;
+        log.push(`chunk:${turn}.${step}:${chunk}`);
       },
       get hasVisibleText() {
         return text.length > 0;
@@ -378,6 +379,46 @@ ok('remove marca a remoção como canceled, a forma durável de cancelar input')
   assert.equal(agent.inbox.hasPending, false);
   ok('steer no meio do passo vira o passo 2 do MESMO turno, sem esperar o turno acabar');
   ok('followup que chega no meio do passo abre turno próprio, depois do turn/end');
+}
+
+// ---------------------------------------------------------------------------
+// Prose before and after a tool call stays in separate paragraphs.
+// ---------------------------------------------------------------------------
+
+{
+  const { session, events } = fakeSession();
+  const { dispatch } = fakeDispatch();
+  const agent = new FakeAgent();
+  const acp = new FakeAcp();
+  const controller = new AbortController();
+  const log: string[] = [];
+  agent.inbox.append('next-turn', message('u1', 'pergunta'));
+
+  acp.onPrompt = (self) => {
+    self.text('antes da ferramenta.');
+    self.push({ kind: 'tool' });
+    self.push({ kind: 'other' });
+    self.answer('depois da ferramenta.');
+  };
+
+  const loop = runBridgeLoop({
+    session,
+    agent: agent as unknown as LoopAgent,
+    dispatch,
+    acp,
+    attempts: fakeAttempts(log),
+    signal: controller.signal,
+    idleTimeoutMs: 1000,
+    cancelGraceMs: 1000,
+  });
+
+  await waitFor(() => turnEnds(events).length >= 1, 'o turno fechar');
+  controller.abort();
+  await loop;
+
+  assert.ok(log.includes('chunk:1.1:antes da ferramenta.'));
+  assert.ok(log.includes('chunk:1.1:\n\ndepois da ferramenta.'));
+  ok('texto depois de uma chamada de ferramenta abre parágrafo novo, em vez de colar no anterior');
 }
 
 // ---------------------------------------------------------------------------

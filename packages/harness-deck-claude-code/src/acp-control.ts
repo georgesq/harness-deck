@@ -91,6 +91,7 @@ export class LiveAcpSession implements LoopAcpSession {
       const content = update.content;
       if (content.type === 'text') return { kind: 'text', text: content.text };
     }
+    if (update.sessionUpdate === 'tool_call') return { kind: 'tool' };
     return { kind: 'other' };
   }
 
