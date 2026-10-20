@@ -23,7 +23,9 @@ import {
   type InboxTarget,
   type ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent';
+import { SessionLogOffset, interruptedTurnClosers } from '@deepseek-ai/dsh-session';
 import type { AgentCancelCause, Session, SessionSeq } from '@deepseek-ai/dsh-session';
+import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence';
 import type { ApprovalOutcome, ApprovalService } from '@deepseek-ai/dsh-user-approval';
 import {
   AssistantStreamAccumulator,
@@ -351,6 +353,12 @@ class LiveAssistantAttempt {
   }
 }
 
+/** A session's owned durable-log handle and how many events it already holds. */
+interface StoredSession {
+  readonly handle: SessionHandle;
+  storedCount: number;
+}
+
 export class GeminiAgentLoop extends Service implements AgentFactory {
   static inject = ['agents', 'sessions', 'approval', 'sandboxPolicy'];
 
@@ -371,38 +379,96 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
     const session = sessions.prepare(options.sessionId, {
       ...(options.seed === undefined ? {} : { seed: options.seed }),
       ...(options.meta === undefined ? {} : { meta: options.meta }),
+      ...(options.inheritedEventCount === undefined ? {} : { inheritedEventCount: options.inheritedEventCount }),
     });
 
-    const detachSession = sessions.enter(session);
+    const stored = await this.createStoredSession(session);
+    return this.launch(ownerCtx, session, stored, options.agentOptions ?? {}, options.setup);
+  }
+
+  /**
+   * Take write ownership of a fresh session's durable log. Without it nothing
+   * reaches `DSH_HOME/sessions` (the JSONL backend only routes events into a
+   * handle somebody opened), and the session list is empty after a restart.
+   */
+  private async createStoredSession(session: Session): Promise<StoredSession | undefined> {
+    const persistence = this.runtime.ctx.get('sessionPersistence');
+    if (persistence === undefined) {
+      process.stderr.write('[gemini] no session persistence backend; the session will not survive a restart\n');
+      return undefined;
+    }
+    const handle = await persistence.create(session.header, {
+      inheritedEventCount: session.inheritedEventCount,
+    });
+    return { handle, storedCount: 0 };
+  }
+
+  /**
+   * Store events appended before the session entered the store (the seed).
+   * They never re-emit through `session/event`; must run before `enter`.
+   */
+  private async appendUnstoredSuffix(stored: StoredSession | undefined, session: Session): Promise<void> {
+    if (stored === undefined) return;
+    const suffix = session.snapshotEvents(SessionLogOffset(stored.storedCount));
+    if (suffix.length > 0) await stored.handle.append(suffix);
+    stored.storedCount += suffix.length;
+  }
+
+  /** Shared by {@link createAgent} and {@link resume}; owns `stored` from here on. */
+  private async launch(
+    ownerCtx: Context,
+    session: Session,
+    stored: StoredSession | undefined,
+    agentOptions: AgentOptions,
+    setup: CreateAgentOptions['setup'],
+  ): Promise<AgentHandle> {
+    const sessions = this.runtime.ctx.sessions;
+    const closeStored = async (): Promise<void> => {
+      await stored?.handle.close().catch((error: unknown) => {
+        ownerCtx.logger.warn(`geminiAgentLoop: closing the log of session "${session.id}" failed: ${String(error)}`);
+      });
+    };
+
+    let detachSession: () => void;
+    try {
+      await this.appendUnstoredSuffix(stored, session);
+      detachSession = sessions.enter(session);
+    } catch (error) {
+      await closeStored();
+      throw error;
+    }
     try {
       sessions.announce(session);
     } catch (error) {
       detachSession();
+      await closeStored();
       throw error;
     }
 
     const loopCtx = this.runtime.ctx;
     let startedAgent: GeminiAgent | undefined;
     ownerCtx.effect(function* () {
-      startedAgent = new GeminiAgent(loopCtx, session, options.agentOptions ?? {});
+      startedAgent = new GeminiAgent(loopCtx, session, agentOptions);
       yield startedAgent.scope.rawDispose;
-    }, `geminiAgentLoop.lifecycle(${options.sessionId})`);
+    }, `geminiAgentLoop.lifecycle(${session.id})`);
 
     if (startedAgent === undefined) {
       detachSession();
+      await closeStored();
       throw new Error('geminiAgentLoop: the Agent did not start');
     }
     const agent: GeminiAgent = startedAgent;
     const agentScope = agent.scope;
 
     let setupCommit: { commit(): void } | undefined;
-    if (options.setup !== undefined) {
+    if (setup !== undefined) {
       try {
-        const result = await options.setup(agentScope.ctx, agent);
+        const result = await setup(agentScope.ctx, agent);
         if (result !== undefined) setupCommit = result;
       } catch (error) {
         detachSession();
         await agentScope.dispose();
+        await closeStored();
         throw error;
       }
     }
@@ -411,12 +477,13 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
     } catch (error) {
       detachSession();
       await agentScope.dispose();
+      await closeStored();
       throw error;
     }
 
     const detachAgent = await this.runtime.ctx.agents.register(agent);
 
-    const cwd = options.meta?.cwd ?? process.cwd();
+    const cwd = session.header.cwd ?? process.cwd();
     let bin = this.config.acpBinPath ?? process.env.GEMINI_ACP_BIN;
     if (!bin) {
       const localBin = new URL('../node_modules/.bin/gemini', import.meta.url).pathname;
@@ -440,6 +507,7 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
         await bridgeDone;
         await detachAgent?.();
         detachSession();
+        await closeStored();
         await agentScope.dispose();
       },
     };
@@ -575,8 +643,38 @@ export class GeminiAgentLoop extends Service implements AgentFactory {
       });
   }
 
-  async resume(_ownerCtx: Context, _options: ResumeAgentOptions): Promise<AgentHandle> {
-    throw new Error('resume not implemented yet');
+  /**
+   * Reloads the session from the persistence backend (same sequence as
+   * `dsh-agent-loop`'s `resumeWith`). The DSH side is fully restored; the ACP
+   * side starts a NEW Gemini session in the same `cwd`, so the model does not
+   * remember the earlier turns.
+   */
+  async resume(ownerCtx: Context, options: ResumeAgentOptions): Promise<AgentHandle> {
+    const persistence = this.runtime.ctx.get('sessionPersistence');
+    if (persistence === undefined) {
+      throw new Error('cannot resume: session persistence is not configured (load a dsh-session-persistence backend)');
+    }
+    const id = options.resumeSessionId;
+    const opts = options.signal === undefined ? {} : { signal: options.signal };
+    const handle = await persistence.open(id, 'write', opts);
+    let session: Session;
+    let stored: StoredSession;
+    try {
+      const cold = await handle.read(0, undefined, opts);
+      const closers = interruptedTurnClosers(cold.events);
+      if (closers.length > 0) await handle.append(closers);
+      session = this.runtime.ctx.sessions.prepare(id, {
+        seed: [...cold.events, ...closers],
+        meta: structuredClone(handle.header),
+        inheritedEventCount: handle.inheritedEventCount,
+        eventState: cold.eventState,
+      });
+      stored = { handle, storedCount: cold.events.length + closers.length };
+    } catch (error) {
+      await handle.close().catch(() => {});
+      throw error;
+    }
+    return this.launch(ownerCtx, session, stored, options.agentOptions ?? {}, options.setup);
   }
 }
 
