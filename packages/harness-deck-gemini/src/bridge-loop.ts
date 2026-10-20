@@ -277,6 +277,7 @@ async function runSingleStep(params: {
       process.stderr.write(`[gemini] ACP prompt rejected: ${String(error)}\n`);
     });
 
+    let toolSinceText = false;
     for (;;) {
       const pending = acp.nextUpdate();
       const wait = await waitForUpdate(pending, idleTimeoutMs, stepAbort.signal);
@@ -293,8 +294,13 @@ async function runSingleStep(params: {
       }
       const update = wait.update;
       if (update.kind === 'stop') break;
-      if (update.kind === 'text') live.pushText(update.text);
+      if (update.kind === 'text') {
+        // Keep prose before and after a tool call in separate paragraphs.
+        live.pushText(toolSinceText && live.hasVisibleText ? `\n\n${update.text}` : update.text);
+        toolSinceText = false;
+      }
       if (update.kind === 'subagent_activity') {
+        toolSinceText = true;
         dispatch.emit('agent/status', { status: 'running' });
       }
     }

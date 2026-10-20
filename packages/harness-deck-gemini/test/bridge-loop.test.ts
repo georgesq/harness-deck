@@ -311,7 +311,8 @@ function userMessages(events: Recorded[]): string[] {
   assert.ok(log.includes('start:1.1'));
   assert.ok(log.includes('chunk:1.1:chunk 1, '));
   assert.ok(log.includes('chunk:1.1:chunk 2, '));
-  assert.ok(log.includes('chunk:1.1:done.'));
+  // a tool call in between starts a new paragraph instead of gluing the prose together
+  assert.ok(log.includes('chunk:1.1:\n\ndone.'));
   assert.ok(log.includes('message:1.1'));
 
   // Check turn completed
